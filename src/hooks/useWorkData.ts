@@ -4,15 +4,23 @@ import type { WorkRecord, AdjustRecord, SiteBlock } from '../utils/dataTypes';
 import { aggregateData, buildSiteBlocks } from '../utils/aggregation';
 import { mockSheet1, mockSheet2 } from '../utils/mockData';
 
+function parseWorkHours(raw: unknown): number {
+  if (raw == null || raw === 'なし' || raw === '') return 0;
+  const n = Number(raw);
+  if (isNaN(n)) return 0;
+  // Excelの時間値は1日=1.0の小数で格納されているため24倍して時間に変換
+  // 例: 0.75 → 18h、timedelta形式も同様
+  return n < 10 ? n * 24 : n; // すでに時間単位の場合（10h超）はそのまま
+}
+
 function parseSheet1Row(row: Record<string, unknown>): WorkRecord | null {
-  const flag = Number(row['B'] ?? 0);  // B列のみ参照（誤ったrow['F']フォールバックを除去）
+  const flag = Number(row['B'] ?? 0);
   const employeeType = String(row['C'] ?? '');
   const site = String(row['D'] ?? '');
   const prj = String(row['E'] ?? '');
   const role = String(row['F'] ?? '');
   const employeeId = Number(row['G'] ?? 0);
-  const rawHours = row['K'];
-  const workHours = rawHours === 'なし' || rawHours == null ? 0 : Number(rawHours);
+  const workHours = parseWorkHours(row['K']);
 
   if (!flag || !site || !role) return null;
   return { flag, employeeType, site, prj, role, employeeId, workHours };
@@ -55,7 +63,8 @@ export function useWorkData(useMock = false) {
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target!.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
+        // cellFormula: false で数式セルを計算済み値として取得
+        const workbook = XLSX.read(data, { type: 'array', cellFormula: false, cellNF: false });
 
         console.log('[useWorkData] シート一覧:', workbook.SheetNames);
 
@@ -72,9 +81,9 @@ export function useWorkData(useMock = false) {
         console.log('[useWorkData] シート1 先頭3行:', JSON.stringify(s1.slice(0, 3), null, 2));
         console.log('[useWorkData] シート2 生データ行数:', s2.length);
 
-        // ヘッダー行をスキップ（1行目）
-        const sheet1Records = s1.slice(1).map(parseSheet1Row).filter((r): r is WorkRecord => r !== null);
-        const sheet2Records = s2.slice(1).map(parseSheet2Row).filter((r): r is AdjustRecord => r !== null);
+        // 1〜2行目はタイトル/空行、3行目がヘッダーのためslice(3)でデータ行から開始
+        const sheet1Records = s1.slice(3).map(parseSheet1Row).filter((r): r is WorkRecord => r !== null);
+        const sheet2Records = s2.slice(3).map(parseSheet2Row).filter((r): r is AdjustRecord => r !== null);
 
         console.log('[useWorkData] パース済み シート1:', sheet1Records.length, '件  シート2:', sheet2Records.length, '件');
 
