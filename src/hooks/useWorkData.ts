@@ -103,8 +103,8 @@ export function useWorkData(useMock = false) {
 
         // SheetJSは空行をスキップするため実質2行（タイトル・ヘッダー）のみ先頭にある
         // index0=タイトル, index1=ヘッダー, index2=データ開始
-        const sheet1Records = s1.slice(2).map(parseSheet1Row).filter((r): r is WorkRecord => r !== null);
-        const sheet2Records = s2.slice(2).map(parseSheet2Row).filter((r): r is AdjustRecord => r !== null);
+        const sheet1Records = s1.map(parseSheet1Row).filter((r): r is WorkRecord => r !== null);
+        const sheet2Records = s2.map(parseSheet2Row).filter((r): r is AdjustRecord => r !== null);
 
         console.log('[useWorkData] パース済み シート1:', sheet1Records.length, '件  シート2:', sheet2Records.length, '件');
 
