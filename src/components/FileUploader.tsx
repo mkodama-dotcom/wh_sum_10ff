@@ -41,6 +41,15 @@ export function FileUploader({ onFile, loading }: Props) {
           />
         </label>
       </div>
+      {/* input を div の外に置き、position: absolute で画面外に配置 */}
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        onChange={onChange}
+        style={{ position: 'absolute', left: '-9999px', opacity: 0 }}
+        tabIndex={-1}
+      />
       <div
         className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
           dragging ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300 hover:border-indigo-400 hover:bg-gray-50'
@@ -50,7 +59,6 @@ export function FileUploader({ onFile, loading }: Props) {
         onDrop={onDrop}
         onClick={() => inputRef.current?.click()}
       >
-        <input ref={inputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={onChange} />
         {loading ? (
           <p className="text-gray-500">読み込み中...</p>
         ) : (
