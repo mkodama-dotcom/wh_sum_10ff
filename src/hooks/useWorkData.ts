@@ -58,6 +58,7 @@ export function useWorkData(useMock = false) {
 
         console.log('[useWorkData] シート一覧:', workbook.SheetNames);
 
+        // シート名はインデックスで取得（英語・日本語どちらにも対応）
         const sheet1Name = workbook.SheetNames[0];
         const sheet2Name = workbook.SheetNames[1];
 
@@ -66,7 +67,8 @@ export function useWorkData(useMock = false) {
           ? XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheet2Name], { header: 'A' })
           : [];
 
-        console.log('[useWorkData] シート1 生データ行数:', s1.length, '先頭行サンプル:', s1[0]);
+        console.log('[useWorkData] シート1 生データ行数:', s1.length);
+        console.log('[useWorkData] シート1 先頭3行:', JSON.stringify(s1.slice(0, 3), null, 2));
         console.log('[useWorkData] シート2 生データ行数:', s2.length);
 
         // ヘッダー行をスキップ（1行目）
