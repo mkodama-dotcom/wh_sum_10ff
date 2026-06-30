@@ -106,7 +106,10 @@ export function useWorkData(useMock = false) {
           return rows;
         }
 
-        const s1 = sheetToRowsSkippingHidden(workbook.Sheets[sheet1Name]);
+        const ws1 = workbook.Sheets[sheet1Name];
+        console.log('[DEBUG] !rows:', JSON.stringify(ws1['!rows']));
+        console.log('[DEBUG] !rows[36]:', JSON.stringify(ws1['!rows']?.[36]));
+        const s1 = sheetToRowsSkippingHidden(ws1);
         const s2 = workbook.Sheets[sheet2Name]
           ? sheetToRowsSkippingHidden(workbook.Sheets[sheet2Name])
           : [];
