@@ -54,11 +54,23 @@ function applyAdjustments(
     if (!category) continue;
 
     // 集計キーは 拠点(D列=site) × 担当(F列=role) × 雇用区分
-    // シート2は常に該当キーから減算するのみ（新規キーは作らない）
-    const key = `${site}|${adj.role}|${category}`;
-    const entry = result.get(key);
-    if (entry) {
-      result.set(key, { ...entry, totalHours: entry.totalHours - adj.adjustHours });
+    const fromKey = `${site}|${adj.role}|${category}`;  // F列=担当 から減算
+
+    if (adj.site === adj.prj) {
+      // STEP②: D列=E列 → 研修（減算のみ）
+      const entry = result.get(fromKey);
+      if (entry) {
+        result.set(fromKey, { ...entry, totalHours: entry.totalHours - adj.adjustHours });
+      }
+    } else {
+      // STEP③: D列≠E列 → 振替（F列担当から減算、E列PRJへ加算）
+      const fromEntry = result.get(fromKey);
+      if (fromEntry) {
+        result.set(fromKey, { ...fromEntry, totalHours: fromEntry.totalHours - adj.adjustHours });
+      }
+      const toKey = `${site}|${adj.prj}|${category}`;  // E列=PRJ へ加算（なければ新規作成）
+      const toEntry = result.get(toKey) ?? { totalHours: 0, employeeIds: new Set<string>() };
+      result.set(toKey, { ...toEntry, totalHours: toEntry.totalHours + adj.adjustHours });
     }
   }
 
