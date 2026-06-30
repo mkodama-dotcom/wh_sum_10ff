@@ -26,8 +26,10 @@ function aggregateSheet1(
     if (r.flag !== 1) continue;
     const category = mapEmployeeCategory(r.employeeType);
     if (!category) continue;
-    if (EXCLUDE_ROLES.has(r.prj) || EXCLUDE_ROLES.has(r.role)) continue;
+    // F列（担当）除外：parseSheet1Rowで除外済みだが念のため二重チェック
+    if (EXCLUDE_ROLES.has(r.role)) continue;
 
+    // 集計キーは r.role（F列 = 担当）を使用
     const key = `${r.site}|${r.role}|${category}`;
     const existing = map.get(key) ?? { totalHours: 0, employeeIds: new Set<string>() };
     existing.totalHours += r.workHours;

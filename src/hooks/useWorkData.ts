@@ -12,31 +12,40 @@ function parseWorkHours(val: unknown): number {
   return num * 24;
 }
 
+const EXCLUDE_ROLES_SET = new Set(['研修_社内', '研修_社外', '非整理対象']);
+
 function parseSheet1Row(row: Record<string, unknown>): WorkRecord | null {
-  const flag = Number(row['B'] ?? 0);
+  // B列が厳密に数値1のもののみ対象（null・空・文字列はすべて除外）
+  if (Number(row['B']) !== 1) return null;
+  const flag = 1;
   const employeeType = String(row['C'] ?? '');
-  const site = String(row['D'] ?? '');
-  const prj = String(row['E'] ?? '');
-  const role = String(row['F'] ?? '');
+  const site = String(row['D'] ?? '').trim();
+  const prj = String(row['E'] ?? '').trim();
+  const role = String(row['F'] ?? '').trim();  // F列 = 担当
   // G列（社員番号）が空の場合はH列（名前）を識別子として使用
   const gVal = String(row['G'] ?? '').trim();
   const hVal = String(row['H'] ?? '').trim();
   const employeeId = gVal !== '' && gVal !== '0' ? `id:${gVal}` : hVal !== '' ? `name:${hVal}` : '';
   const workHours = parseWorkHours(row['K']);
 
-  if (!flag || !site || !role) return null;
+  // F列（担当）が除外対象 or 時間が0の行は除外
+  if (!site || !role) return null;
+  if (EXCLUDE_ROLES_SET.has(role)) return null;
+  if (workHours === 0) return null;
+
   return { flag, employeeType, site, prj, role, employeeId, workHours };
 }
 
 function parseSheet2Row(row: Record<string, unknown>): AdjustRecord | null {
-  const flag = Number(row['B'] ?? 0);
+  if (Number(row['B']) !== 1) return null;
+  const flag = 1;
   const employeeType = String(row['C'] ?? '');
-  const site = String(row['D'] ?? '');
-  const prj = String(row['E'] ?? '');
-  const role = String(row['F'] ?? '');
+  const site = String(row['D'] ?? '').trim();
+  const prj = String(row['E'] ?? '').trim();
+  const role = String(row['F'] ?? '').trim();
   const adjustHours = Number(row['J'] ?? 0);
 
-  if (!flag || !site) return null;
+  if (!site) return null;
   return { flag, employeeType, site, prj, role, adjustHours };
 }
 
@@ -85,11 +94,11 @@ export function useWorkData(useMock = false) {
 
         console.log('[useWorkData] シート1 生データ行数:', s1.length);
         console.log('[useWorkData] シート1 先頭3行:', JSON.stringify(s1.slice(0, 3), null, 2));
-        // D/E/F列の実値確認（site/prj/roleが正しい列か検証）
-        const colSamples = s1.slice(2, 7).map((r) => ({
-          B: r['B'], C: r['C'], D: r['D'], E: r['E'], F: r['F'], G: r['G'], H: r['H'], K生値: r['K'],
+        // パース後の先頭5レコードで role（F列=担当）が正しいか確認
+        const colSamples = s1.slice(0, 10).map((r, i) => ({
+          idx: i, B: r['B'], D: r['D'], E: r['E'], F: r['F'], K: r['K'],
         }));
-        console.log('[useWorkData] 列サンプル（D=拠点? E=PRJ? F=担当?）:', colSamples);
+        console.log('[useWorkData] 全列サンプル（index0〜9）:', colSamples);
         console.log('[useWorkData] シート2 生データ行数:', s2.length);
 
         // SheetJSは空行をスキップするため実質2行（タイトル・ヘッダー）のみ先頭にある
