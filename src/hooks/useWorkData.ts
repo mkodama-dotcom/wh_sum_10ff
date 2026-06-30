@@ -108,6 +108,19 @@ export function useWorkData(useMock = false) {
 
         console.log('[useWorkData] パース済み シート1:', sheet1Records.length, '件  シート2:', sheet2Records.length, '件');
 
+        // いなべ・栽培・パートに絞ったデバッグ出力
+        const inabeKaibaiPart = sheet1Records.filter(
+          (r) => r.site === 'いなべ' && r.role === '栽培' && r.employeeType === 'アルバイト'
+        );
+        console.log('[DEBUG] いなべ×栽培×アルバイト レコード一覧:', inabeKaibaiPart);
+        console.log('[DEBUG] いなべ×栽培×アルバイト 件数:', inabeKaibaiPart.length, '  合計時間:', inabeKaibaiPart.reduce((s, r) => s + r.workHours, 0));
+
+        const inabeKaibaiEmp = sheet1Records.filter(
+          (r) => r.site === 'いなべ' && r.role === '栽培' && r.employeeType !== 'アルバイト'
+        );
+        console.log('[DEBUG] いなべ×栽培×社員系 件数:', inabeKaibaiEmp.length, '  合計時間:', inabeKaibaiEmp.reduce((s, r) => s + r.workHours, 0));
+        console.log('[DEBUG] いなべ×栽培×社員系 employeeId一覧:', [...new Set(inabeKaibaiEmp.map((r) => r.employeeId))]);
+
         const aggregated = aggregateData(sheet1Records, sheet2Records, targetMonth);
         console.log('[useWorkData] 集計結果:', aggregated.length, '行');
 
