@@ -68,9 +68,12 @@ export function useWorkData(useMock = false) {
 
         console.log('[useWorkData] シート一覧:', workbook.SheetNames);
 
-        // シート名はインデックスで取得（英語・日本語どちらにも対応）
-        const sheet1Name = workbook.SheetNames[0];
-        const sheet2Name = workbook.SheetNames[1];
+        const sheet1Name = 'シート1';
+        const sheet2Name = 'シート2';
+
+        if (!workbook.Sheets[sheet1Name]) {
+          throw new Error(`シート「${sheet1Name}」が見つかりません。シート一覧: ${workbook.SheetNames.join(', ')}`);
+        }
 
         const s1 = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheet1Name], { header: 'A' });
         const s2 = sheet2Name
