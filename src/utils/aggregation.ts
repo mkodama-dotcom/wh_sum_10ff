@@ -12,15 +12,15 @@ const DELIVERY_ROLES = new Set(['配送・栽培', '配送・出荷']);
 
 function mapEmployeeCategory(raw: string): EmployeeCategory | null {
   if (raw === 'アルバイト') return 'part';
-  if (raw === '社員＋技能実習生') return 'employee';
+  if (raw === '社員＋技能実習生' || raw === '技能実習生' || raw === '社員') return 'employee';
   return null;
 }
 
 // Step1: シート１を集計（拠点 × 担当 × 雇用区分）
 function aggregateSheet1(
   records: WorkRecord[],
-): Map<string, { totalHours: number; employeeIds: Set<number> }> {
-  const map = new Map<string, { totalHours: number; employeeIds: Set<number> }>();
+): Map<string, { totalHours: number; employeeIds: Set<string> }> {
+  const map = new Map<string, { totalHours: number; employeeIds: Set<string> }>();
 
   for (const r of records) {
     if (r.flag !== 1) continue;
@@ -29,7 +29,7 @@ function aggregateSheet1(
     if (EXCLUDE_ROLES.has(r.prj) || EXCLUDE_ROLES.has(r.role)) continue;
 
     const key = `${r.site}|${r.role}|${category}`;
-    const existing = map.get(key) ?? { totalHours: 0, employeeIds: new Set<number>() };
+    const existing = map.get(key) ?? { totalHours: 0, employeeIds: new Set<string>() };
     existing.totalHours += r.workHours;
     existing.employeeIds.add(r.employeeId);
     map.set(key, existing);
@@ -40,10 +40,10 @@ function aggregateSheet1(
 
 // Step2: シート２の調整値をマージ
 function applyAdjustments(
-  base: Map<string, { totalHours: number; employeeIds: Set<number> }>,
+  base: Map<string, { totalHours: number; employeeIds: Set<string> }>,
   adjustRecords: AdjustRecord[],
   site: string,
-): Map<string, { totalHours: number; employeeIds: Set<number> }> {
+): Map<string, { totalHours: number; employeeIds: Set<string> }> {
   const result = new Map(base);
 
   for (const adj of adjustRecords) {
@@ -68,7 +68,7 @@ function applyAdjustments(
         result.set(fromKey, { ...fromEntry, totalHours: fromEntry.totalHours - adj.adjustHours });
       }
 
-      const toEntry = result.get(toKey) ?? { totalHours: 0, employeeIds: new Set<number>() };
+      const toEntry = result.get(toKey) ?? { totalHours: 0, employeeIds: new Set<string>() };
       result.set(toKey, { ...toEntry, totalHours: toEntry.totalHours + adj.adjustHours });
     }
   }
@@ -78,7 +78,7 @@ function applyAdjustments(
 
 // Step3: AggregatedRow[] に変換
 function toAggregatedRows(
-  map: Map<string, { totalHours: number; employeeIds: Set<number> }>,
+  map: Map<string, { totalHours: number; employeeIds: Set<string> }>,
   yearMonth: string,
 ): AggregatedRow[] {
   return Array.from(map.entries()).map(([key, val]) => {
@@ -127,8 +127,8 @@ export function buildSiteBlocks(rows: AggregatedRow[]): SiteBlock[] {
 
   return Array.from(siteMap.entries()).map(([site, roleMap]) => {
     // 配送系ロールをまとめる
-    const deliveryEmployeeHours = { totalHours: 0, headcount: 0, employeeIds: new Set<number>() };
-    const deliveryPartHours = { totalHours: 0, headcount: 0, employeeIds: new Set<number>() };
+    const deliveryEmployeeHours = { totalHours: 0, headcount: 0, employeeIds: new Set<string>() };
+    const deliveryPartHours = { totalHours: 0, headcount: 0, employeeIds: new Set<string>() };
     const regularRoles: RoleDisplayRow[] = [];
     let hasDelivery = false;
 

@@ -8,9 +8,8 @@ function parseWorkHours(raw: unknown): number {
   if (raw == null || raw === 'なし' || raw === '') return 0;
   const n = Number(raw);
   if (isNaN(n)) return 0;
-  // Excelの時間値は1日=1.0の小数で格納されているため24倍して時間に変換
-  // 例: 0.75 → 18h、timedelta形式も同様
-  return n < 10 ? n * 24 : n; // すでに時間単位の場合（10h超）はそのまま
+  // ExcelのシリアルK値は1=24時間の小数なので常に×24して時間に変換
+  return n * 24;
 }
 
 function parseSheet1Row(row: Record<string, unknown>): WorkRecord | null {
@@ -19,7 +18,10 @@ function parseSheet1Row(row: Record<string, unknown>): WorkRecord | null {
   const site = String(row['D'] ?? '');
   const prj = String(row['E'] ?? '');
   const role = String(row['F'] ?? '');
-  const employeeId = Number(row['G'] ?? 0);
+  // G列（社員番号）が空の場合はH列（名前）を識別子として使用
+  const gVal = String(row['G'] ?? '').trim();
+  const hVal = String(row['H'] ?? '').trim();
+  const employeeId = gVal !== '' && gVal !== '0' ? `id:${gVal}` : hVal !== '' ? `name:${hVal}` : '';
   const workHours = parseWorkHours(row['K']);
 
   if (!flag || !site || !role) return null;

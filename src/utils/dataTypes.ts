@@ -5,7 +5,7 @@ export type WorkRecord = {
   site: string;         // D列（拠点）
   prj: string;          // E列（PRJ）
   role: string;         // F列（担当）
-  employeeId: number;   // G列（社員番号）
+  employeeId: string;   // G列（社員番号）、空の場合はH列（名前）
   workHours: number;    // K列（実質勤務時間）
 };
 
