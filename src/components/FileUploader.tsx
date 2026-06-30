@@ -14,18 +14,26 @@ export function FileUploader({ onFile, loading }: Props) {
   });
 
   function handleFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0) {
+      console.log('[FileUploader] handleFiles: ファイルなし');
+      return;
+    }
+    console.log('[FileUploader] handleFiles: ファイル受け取り', files[0].name, files[0].type, files[0].size);
     onFile(files[0], month);
   }
 
   function onDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragging(false);
+    console.log('[FileUploader] onDrop 発火');
     handleFiles(e.dataTransfer.files);
   }
 
   function onChange(e: ChangeEvent<HTMLInputElement>) {
+    console.log('[FileUploader] onChange 発火');
     handleFiles(e.target.files);
+    // 同じファイルを再選択できるよう値をリセット
+    e.target.value = '';
   }
 
   return (
