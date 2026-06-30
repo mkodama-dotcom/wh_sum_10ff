@@ -85,9 +85,11 @@ export function useWorkData(useMock = false) {
 
         console.log('[useWorkData] シート1 生データ行数:', s1.length);
         console.log('[useWorkData] シート1 先頭3行:', JSON.stringify(s1.slice(0, 3), null, 2));
-        // K列の生値を確認（× 24 前）
-        const kSamples = s1.slice(2, 7).map((r) => ({ K生値: r['K'], K変換後: (Number(r['K']) * 24).toFixed(2) + 'h' }));
-        console.log('[useWorkData] K列サンプル（データ行3〜7）:', kSamples);
+        // D/E/F列の実値確認（site/prj/roleが正しい列か検証）
+        const colSamples = s1.slice(2, 7).map((r) => ({
+          B: r['B'], C: r['C'], D: r['D'], E: r['E'], F: r['F'], G: r['G'], H: r['H'], K生値: r['K'],
+        }));
+        console.log('[useWorkData] 列サンプル（D=拠点? E=PRJ? F=担当?）:', colSamples);
         console.log('[useWorkData] シート2 生データ行数:', s2.length);
 
         // SheetJSは空行をスキップするため実質2行（タイトル・ヘッダー）のみ先頭にある
