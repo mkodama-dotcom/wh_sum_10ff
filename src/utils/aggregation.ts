@@ -1,0 +1,197 @@
+import type {
+  WorkRecord,
+  AdjustRecord,
+  AggregatedRow,
+  EmployeeCategory,
+  RoleDisplayRow,
+  SiteBlock,
+} from './dataTypes';
+
+const EXCLUDE_ROLES = new Set(['研修_社内', '研修_社外', '非整理対象']);
+const DELIVERY_ROLES = new Set(['配送・栽培', '配送・出荷']);
+
+function mapEmployeeCategory(raw: string): EmployeeCategory | null {
+  if (raw === 'アルバイト') return 'part';
+  if (raw === '社員＋技能実習生') return 'employee';
+  return null;
+}
+
+// Step1: シート１を集計（拠点 × 担当 × 雇用区分）
+function aggregateSheet1(
+  records: WorkRecord[],
+): Map<string, { totalHours: number; employeeIds: Set<number> }> {
+  const map = new Map<string, { totalHours: number; employeeIds: Set<number> }>();
+
+  for (const r of records) {
+    if (r.flag !== 1) continue;
+    const category = mapEmployeeCategory(r.employeeType);
+    if (!category) continue;
+    if (EXCLUDE_ROLES.has(r.prj) || EXCLUDE_ROLES.has(r.role)) continue;
+
+    const key = `${r.site}|${r.role}|${category}`;
+    const existing = map.get(key) ?? { totalHours: 0, employeeIds: new Set<number>() };
+    existing.totalHours += r.workHours;
+    existing.employeeIds.add(r.employeeId);
+    map.set(key, existing);
+  }
+
+  return map;
+}
+
+// Step2: シート２の調整値をマージ
+function applyAdjustments(
+  base: Map<string, { totalHours: number; employeeIds: Set<number> }>,
+  adjustRecords: AdjustRecord[],
+  site: string,
+): Map<string, { totalHours: number; employeeIds: Set<number> }> {
+  const result = new Map(base);
+
+  for (const adj of adjustRecords) {
+    if (adj.flag !== 1) continue;
+    const category = mapEmployeeCategory(adj.employeeType);
+    if (!category) continue;
+
+    if (adj.prj === adj.role) {
+      // PRJ = 担当 → そのPRJから引く
+      const key = `${site}|${adj.prj}|${category}`;
+      const entry = result.get(key);
+      if (entry) {
+        result.set(key, { ...entry, totalHours: entry.totalHours - adj.adjustHours });
+      }
+    } else {
+      // PRJ ≠ 担当 → FROM PRJから引き、TO PRJへ加える
+      const fromKey = `${site}|${adj.prj}|${category}`;
+      const toKey = `${site}|${adj.role}|${category}`;
+
+      const fromEntry = result.get(fromKey);
+      if (fromEntry) {
+        result.set(fromKey, { ...fromEntry, totalHours: fromEntry.totalHours - adj.adjustHours });
+      }
+
+      const toEntry = result.get(toKey) ?? { totalHours: 0, employeeIds: new Set<number>() };
+      result.set(toKey, { ...toEntry, totalHours: toEntry.totalHours + adj.adjustHours });
+    }
+  }
+
+  return result;
+}
+
+// Step3: AggregatedRow[] に変換
+function toAggregatedRows(
+  map: Map<string, { totalHours: number; employeeIds: Set<number> }>,
+  yearMonth: string,
+): AggregatedRow[] {
+  return Array.from(map.entries()).map(([key, val]) => {
+    const [site, role, employeeCategory] = key.split('|') as [string, string, EmployeeCategory];
+    const headcount = val.employeeIds.size;
+    return {
+      yearMonth,
+      site,
+      role,
+      employeeCategory,
+      totalHours: val.totalHours,
+      headcount,
+      avgHours: headcount > 0 ? val.totalHours / headcount : 0,
+    };
+  });
+}
+
+export function aggregateData(
+  sheet1: WorkRecord[],
+  sheet2: AdjustRecord[],
+  targetMonth = '2025-06',
+): AggregatedRow[] {
+  const base = aggregateSheet1(sheet1);
+
+  // 拠点一覧を取得してサイト別に調整適用
+  const sites = new Set(sheet1.filter((r) => r.flag === 1).map((r) => r.site));
+  let adjusted = base;
+  for (const site of sites) {
+    const siteAdj = sheet2.filter((a) => a.site === site);
+    adjusted = applyAdjustments(adjusted, siteAdj, site);
+  }
+
+  return toAggregatedRows(adjusted, targetMonth);
+}
+
+// 表示用のSiteBlock[]に変換
+export function buildSiteBlocks(rows: AggregatedRow[]): SiteBlock[] {
+  const siteMap = new Map<string, Map<string, { employee?: AggregatedRow; part?: AggregatedRow }>>();
+
+  for (const row of rows) {
+    if (!siteMap.has(row.site)) siteMap.set(row.site, new Map());
+    const roleMap = siteMap.get(row.site)!;
+    if (!roleMap.has(row.role)) roleMap.set(row.role, {});
+    roleMap.get(row.role)![row.employeeCategory] = row;
+  }
+
+  return Array.from(siteMap.entries()).map(([site, roleMap]) => {
+    // 配送系ロールをまとめる
+    const deliveryEmployeeHours = { totalHours: 0, headcount: 0, employeeIds: new Set<number>() };
+    const deliveryPartHours = { totalHours: 0, headcount: 0, employeeIds: new Set<number>() };
+    const regularRoles: RoleDisplayRow[] = [];
+    let hasDelivery = false;
+
+    for (const [role, cats] of roleMap.entries()) {
+      if (DELIVERY_ROLES.has(role)) {
+        hasDelivery = true;
+        if (cats.employee) {
+          deliveryEmployeeHours.totalHours += cats.employee.totalHours;
+          deliveryEmployeeHours.headcount += cats.employee.headcount;
+        }
+        if (cats.part) {
+          deliveryPartHours.totalHours += cats.part.totalHours;
+          deliveryPartHours.headcount += cats.part.headcount;
+        }
+        continue;
+      }
+
+      const emp = cats.employee ?? null;
+      const prt = cats.part ?? null;
+      const totalHours = (emp?.totalHours ?? 0) + (prt?.totalHours ?? 0);
+      const headcount = (emp?.headcount ?? 0) + (prt?.headcount ?? 0);
+
+      regularRoles.push({
+        role,
+        employee: emp ? { totalHours: emp.totalHours, headcount: emp.headcount, avgHours: emp.avgHours } : null,
+        part: prt ? { totalHours: prt.totalHours, headcount: prt.headcount, avgHours: prt.avgHours } : null,
+        subtotal: { totalHours, headcount },
+        isDelivery: false,
+      });
+    }
+
+    const displayRoles: RoleDisplayRow[] = [...regularRoles];
+
+    if (hasDelivery) {
+      const totalHours = deliveryEmployeeHours.totalHours + deliveryPartHours.totalHours;
+      const headcount = deliveryEmployeeHours.headcount + deliveryPartHours.headcount;
+      displayRoles.push({
+        role: '配送',
+        employee: deliveryEmployeeHours.headcount > 0 ? { totalHours: deliveryEmployeeHours.totalHours, headcount: deliveryEmployeeHours.headcount, avgHours: deliveryEmployeeHours.totalHours / deliveryEmployeeHours.headcount } : null,
+        part: deliveryPartHours.headcount > 0 ? { totalHours: deliveryPartHours.totalHours, headcount: deliveryPartHours.headcount, avgHours: deliveryPartHours.totalHours / deliveryPartHours.headcount } : null,
+        subtotal: { totalHours, headcount },
+        isDelivery: true,
+      });
+    }
+
+    // 拠点合計
+    let totalEmployeeHours = 0, totalEmployeeHeadcount = 0;
+    let totalPartHours = 0, totalPartHeadcount = 0;
+
+    for (const role of displayRoles) {
+      if (role.employee) { totalEmployeeHours += role.employee.totalHours; totalEmployeeHeadcount += role.employee.headcount; }
+      if (role.part) { totalPartHours += role.part.totalHours; totalPartHeadcount += role.part.headcount; }
+    }
+
+    return {
+      site,
+      roles: displayRoles,
+      total: {
+        employee: totalEmployeeHeadcount > 0 ? { totalHours: totalEmployeeHours, headcount: totalEmployeeHeadcount } : null,
+        part: totalPartHeadcount > 0 ? { totalHours: totalPartHours, headcount: totalPartHeadcount } : null,
+        totalHours: totalEmployeeHours + totalPartHours,
+        headcount: totalEmployeeHeadcount + totalPartHeadcount,
+      },
+    };
+  });
+}
