@@ -74,16 +74,15 @@ type State = {
   targetMonth: string;
   loading: boolean;
   error: string | null;
-  notice: string | null;
 };
 
 export function useWorkData(useMock = false) {
   const [state, setState] = useState<State>(() => {
     if (useMock) {
       const rows = aggregateData(mockSheet1, mockSheet2, '2025-06');
-      return { siteBlocks: buildSiteBlocks(rows), targetMonth: '2025-06', loading: false, error: null, notice: null };
+      return { siteBlocks: buildSiteBlocks(rows), targetMonth: '2025-06', loading: false, error: null };
     }
-    return { siteBlocks: [], targetMonth: '', loading: false, error: null, notice: null };
+    return { siteBlocks: [], targetMonth: '', loading: false, error: null };
   });
 
   const loadFile = useCallback((file: File) => {
@@ -113,18 +112,14 @@ export function useWorkData(useMock = false) {
 
         const aggregated = aggregateData(sheet1Records, sheet2Records, targetMonth);
 
-        const notice =
-          'ご注意：ExcelのグループAPPはSheetJSで検出できません。' +
-          '集計対象外の行（非表示・グループ化）はExcel側でB列を空白にしてください。';
-
-        setState({ siteBlocks: buildSiteBlocks(aggregated), targetMonth, loading: false, error: null, notice });
+        setState({ siteBlocks: buildSiteBlocks(aggregated), targetMonth, loading: false, error: null });
       } catch (err) {
         console.error('[useWorkData] エラー:', err);
-        setState((s) => ({ ...s, loading: false, error: `ファイル読み込みエラー: ${String(err)}`, notice: null }));
+        setState((s) => ({ ...s, loading: false, error: `ファイル読み込みエラー: ${String(err)}` }));
       }
     };
     reader.onerror = () => {
-      setState((s) => ({ ...s, loading: false, error: 'ファイルの読み取りに失敗しました', notice: null }));
+      setState((s) => ({ ...s, loading: false, error: 'ファイルの読み取りに失敗しました' }));
     };
     reader.readAsArrayBuffer(file);
   }, []);
