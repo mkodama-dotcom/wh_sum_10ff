@@ -12,6 +12,24 @@ function parseWorkHours(val: unknown): number {
   return num * 24;
 }
 
+// Excelの日付値（シリアル値または "YYYY-MM-DD" 文字列）を "YYYY-MM" に変換
+function parseYearMonth(val: unknown): string | null {
+  if (val === null || val === undefined) return null;
+  const num = Number(val);
+  if (!isNaN(num) && num > 0) {
+    // Excelシリアル日付 → UTC日付（1900-01-01 = 1、うるう年バグ補正で -25569）
+    const date = new Date(Math.round((num - 25569) * 86400 * 1000));
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }
+  // 文字列形式 "YYYY-MM-DD" or "YYYY-MM"
+  const str = String(val).trim();
+  const match = str.match(/^(\d{4})-(\d{2})/);
+  if (match) return `${match[1]}-${match[2]}`;
+  return null;
+}
+
 const EXCLUDE_ROLES_SET = new Set(['研修_社内', '研修_社外', '非整理対象']);
 
 function parseSheet1Row(row: Record<string, unknown>): WorkRecord | null {
@@ -28,7 +46,6 @@ function parseSheet1Row(row: Record<string, unknown>): WorkRecord | null {
   const employeeId = gVal !== '' && gVal !== '0' ? `id:${gVal}` : hVal !== '' ? `name:${hVal}` : '';
   const workHours = parseWorkHours(row['K']);
 
-  // F列（担当）が除外対象 or 時間が0の行は除外
   if (!site || !role) return null;
   if (EXCLUDE_ROLES_SET.has(role)) return null;
   if (workHours === 0) return null;
@@ -36,8 +53,16 @@ function parseSheet1Row(row: Record<string, unknown>): WorkRecord | null {
   return { flag, employeeType, site, prj, role, employeeId, workHours };
 }
 
-function parseSheet2Row(row: Record<string, unknown>): AdjustRecord | null {
+function parseSheet2Row(
+  row: Record<string, unknown>,
+  targetYearMonth: string,
+): AdjustRecord | null {
   if (Number(row['B']) !== 1) return null;
+
+  // I列の計上年月がシート1のH1年月と一致する行のみ対象
+  const rowYearMonth = parseYearMonth(row['I']);
+  if (rowYearMonth !== targetYearMonth) return null;
+
   const flag = 1;
   const employeeType = String(row['C'] ?? '');
   const site = String(row['D'] ?? '').trim();
@@ -86,8 +111,7 @@ export function useWorkData(useMock = false) {
   });
 
   const loadFile = useCallback((file: File) => {
-    const targetMonth = '';
-    setState((s) => ({ ...s, loading: true, error: null, notice: null }));
+    setState((s) => ({ ...s, loading: true, error: null }));
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -102,17 +126,24 @@ export function useWorkData(useMock = false) {
           throw new Error(`シート「${sheet1Name}」が見つかりません。シート一覧: ${workbook.SheetNames.join(', ')}`);
         }
 
-        const s1 = sheetToRows(workbook.Sheets[sheet1Name]);
+        // シート1のH1セルから対象年月を取得
+        const ws1 = workbook.Sheets[sheet1Name];
+        const h1Value = ws1['H1']?.v ?? null;
+        const targetYearMonth = parseYearMonth(h1Value) ?? '';
+
+        const s1 = sheetToRows(ws1);
         const s2 = workbook.Sheets[sheet2Name]
           ? sheetToRows(workbook.Sheets[sheet2Name])
           : [];
 
         const sheet1Records = s1.map(parseSheet1Row).filter((r): r is WorkRecord => r !== null);
-        const sheet2Records = s2.map(parseSheet2Row).filter((r): r is AdjustRecord => r !== null);
+        const sheet2Records = s2
+          .map((row) => parseSheet2Row(row, targetYearMonth))
+          .filter((r): r is AdjustRecord => r !== null);
 
-        const aggregated = aggregateData(sheet1Records, sheet2Records, targetMonth);
+        const aggregated = aggregateData(sheet1Records, sheet2Records, targetYearMonth);
 
-        setState({ siteBlocks: buildSiteBlocks(aggregated), targetMonth, loading: false, error: null });
+        setState({ siteBlocks: buildSiteBlocks(aggregated), targetMonth: targetYearMonth, loading: false, error: null });
       } catch (err) {
         console.error('[useWorkData] エラー:', err);
         setState((s) => ({ ...s, loading: false, error: `ファイル読み込みエラー: ${String(err)}` }));
