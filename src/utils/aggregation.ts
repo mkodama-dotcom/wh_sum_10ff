@@ -53,21 +53,12 @@ function applyAdjustments(
     const category = mapEmployeeCategory(adj.employeeType);
     if (!category) continue;
 
-    // 集計キーは 拠点(D列=site) × 担当(F列=role)
-    // E列(PRJ)は参照元の担当を示す。E=F なら同一担当からの純減、E≠F なら E担当から F担当へ振替
-    const fromKey = `${site}|${adj.prj}|${category}`;   // E列=振替元担当
-    const toKey   = `${site}|${adj.role}|${category}`;  // F列=振替先担当（または減算対象）
-
-    // 振替元（E列のPRJ）から減算
-    const fromEntry = result.get(fromKey);
-    if (fromEntry) {
-      result.set(fromKey, { ...fromEntry, totalHours: fromEntry.totalHours - adj.adjustHours });
-    }
-
-    // E列 ≠ F列の場合のみ振替先（F列の担当）へ加算
-    if (adj.prj !== adj.role) {
-      const toEntry = result.get(toKey) ?? { totalHours: 0, employeeIds: new Set<string>() };
-      result.set(toKey, { ...toEntry, totalHours: toEntry.totalHours + adj.adjustHours });
+    // 集計キーは 拠点(D列=site) × 担当(F列=role) × 雇用区分
+    // シート2は常に該当キーから減算するのみ（新規キーは作らない）
+    const key = `${site}|${adj.role}|${category}`;
+    const entry = result.get(key);
+    if (entry) {
+      result.set(key, { ...entry, totalHours: entry.totalHours - adj.adjustHours });
     }
   }
 
