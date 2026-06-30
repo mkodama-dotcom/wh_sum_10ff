@@ -49,35 +49,52 @@ function parseSheet2Row(row: Record<string, unknown>): AdjustRecord | null {
   return { flag, employeeType, site, prj, role, adjustHours };
 }
 
+// 行ループでセル値を取得（sheet_to_json の代替）
+// 注意: SheetJS は Excel のグループ化による非表示行を !rows[R].hidden で検出できません。
+// 集計対象外の行は Excel 側で B列を空白にしてください。
+function sheetToRows(ws: XLSX.WorkSheet): Record<string, unknown>[] {
+  const ref = ws['!ref'];
+  if (!ref) return [];
+  const range = XLSX.utils.decode_range(ref);
+  const rows: Record<string, unknown>[] = [];
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    const row: Record<string, unknown> = {};
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const colLetter = XLSX.utils.encode_col(C);
+      const cellAddr = XLSX.utils.encode_cell({ r: R, c: C });
+      row[colLetter] = ws[cellAddr]?.v ?? null;
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
 type State = {
   siteBlocks: SiteBlock[];
   targetMonth: string;
   loading: boolean;
   error: string | null;
+  notice: string | null;
 };
 
 export function useWorkData(useMock = false) {
   const [state, setState] = useState<State>(() => {
     if (useMock) {
       const rows = aggregateData(mockSheet1, mockSheet2, '2025-06');
-      return { siteBlocks: buildSiteBlocks(rows), targetMonth: '2025-06', loading: false, error: null };
+      return { siteBlocks: buildSiteBlocks(rows), targetMonth: '2025-06', loading: false, error: null, notice: null };
     }
-    return { siteBlocks: [], targetMonth: '', loading: false, error: null };
+    return { siteBlocks: [], targetMonth: '', loading: false, error: null, notice: null };
   });
 
   const loadFile = useCallback((file: File) => {
     const targetMonth = '';
-    console.log('[useWorkData] loadFile 開始:', file.name, targetMonth);
-    setState((s) => ({ ...s, loading: true, error: null }));
+    setState((s) => ({ ...s, loading: true, error: null, notice: null }));
 
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target!.result as ArrayBuffer);
-        // cellFormula: false で数式セルを計算済み値として取得
         const workbook = XLSX.read(data, { type: 'array', cellFormula: false, cellNF: false });
-
-        console.log('[useWorkData] シート一覧:', workbook.SheetNames);
 
         const sheet1Name = 'シート1';
         const sheet2Name = 'シート2';
@@ -86,69 +103,28 @@ export function useWorkData(useMock = false) {
           throw new Error(`シート「${sheet1Name}」が見つかりません。シート一覧: ${workbook.SheetNames.join(', ')}`);
         }
 
-        // 非表示行をスキップしながら行データをオブジェクト配列に変換するヘルパー
-        function sheetToRowsSkippingHidden(ws: XLSX.WorkSheet): Record<string, unknown>[] {
-          const ref = ws['!ref'];
-          if (!ref) return [];
-          const range = XLSX.utils.decode_range(ref);
-          const rows: Record<string, unknown>[] = [];
-          for (let R = range.s.r; R <= range.e.r; R++) {
-            // グループ化・非表示行をスキップ
-            if (ws['!rows']?.[R]?.hidden) continue;
-            const row: Record<string, unknown> = {};
-            for (let C = range.s.c; C <= range.e.c; C++) {
-              const colLetter = XLSX.utils.encode_col(C);
-              const cellAddr = XLSX.utils.encode_cell({ r: R, c: C });
-              row[colLetter] = ws[cellAddr]?.v ?? null;
-            }
-            rows.push(row);
-          }
-          return rows;
-        }
-
-        const ws1 = workbook.Sheets[sheet1Name];
-        console.log('[DEBUG] !rows:', JSON.stringify(ws1['!rows']));
-        console.log('[DEBUG] !rows[36]:', JSON.stringify(ws1['!rows']?.[36]));
-        const s1 = sheetToRowsSkippingHidden(ws1);
+        const s1 = sheetToRows(workbook.Sheets[sheet1Name]);
         const s2 = workbook.Sheets[sheet2Name]
-          ? sheetToRowsSkippingHidden(workbook.Sheets[sheet2Name])
+          ? sheetToRows(workbook.Sheets[sheet2Name])
           : [];
 
-        console.log('[useWorkData] シート1 生データ行数（非表示除外後）:', s1.length);
-        console.log('[useWorkData] シート2 生データ行数（非表示除外後）:', s2.length);
-
-        // SheetJSは空行をスキップするため実質2行（タイトル・ヘッダー）のみ先頭にある
-        // index0=タイトル, index1=ヘッダー, index2=データ開始
         const sheet1Records = s1.map(parseSheet1Row).filter((r): r is WorkRecord => r !== null);
         const sheet2Records = s2.map(parseSheet2Row).filter((r): r is AdjustRecord => r !== null);
 
-        console.log('[useWorkData] パース済み シート1:', sheet1Records.length, '件  シート2:', sheet2Records.length, '件');
-
-        // いなべ・栽培・パートに絞ったデバッグ出力
-        const inabeKaibaiPart = sheet1Records.filter(
-          (r) => r.site === 'いなべ' && r.role === '栽培' && r.employeeType === 'アルバイト'
-        );
-        console.log('[DEBUG] いなべ×栽培×アルバイト レコード一覧:', JSON.stringify(inabeKaibaiPart, null, 2));
-        console.log('[DEBUG] いなべ×栽培×アルバイト 件数:', inabeKaibaiPart.length, '  合計時間:', inabeKaibaiPart.reduce((s, r) => s + r.workHours, 0));
-
-        const inabeKaibaiEmp = sheet1Records.filter(
-          (r) => r.site === 'いなべ' && r.role === '栽培' && r.employeeType !== 'アルバイト'
-        );
-        console.log('[DEBUG] いなべ×栽培×社員系 件数:', inabeKaibaiEmp.length, '  合計時間:', inabeKaibaiEmp.reduce((s, r) => s + r.workHours, 0));
-        console.log('[DEBUG] いなべ×栽培×社員系 employeeId一覧:', [...new Set(inabeKaibaiEmp.map((r) => r.employeeId))]);
-
         const aggregated = aggregateData(sheet1Records, sheet2Records, targetMonth);
-        console.log('[useWorkData] 集計結果:', aggregated.length, '行');
 
-        setState({ siteBlocks: buildSiteBlocks(aggregated), targetMonth, loading: false, error: null });
+        const notice =
+          'ご注意：ExcelのグループAPPはSheetJSで検出できません。' +
+          '集計対象外の行（非表示・グループ化）はExcel側でB列を空白にしてください。';
+
+        setState({ siteBlocks: buildSiteBlocks(aggregated), targetMonth, loading: false, error: null, notice });
       } catch (err) {
         console.error('[useWorkData] エラー:', err);
-        setState((s) => ({ ...s, loading: false, error: `ファイル読み込みエラー: ${String(err)}` }));
+        setState((s) => ({ ...s, loading: false, error: `ファイル読み込みエラー: ${String(err)}`, notice: null }));
       }
     };
     reader.onerror = () => {
-      console.error('[useWorkData] FileReader エラー');
-      setState((s) => ({ ...s, loading: false, error: 'ファイルの読み取りに失敗しました' }));
+      setState((s) => ({ ...s, loading: false, error: 'ファイルの読み取りに失敗しました', notice: null }));
     };
     reader.readAsArrayBuffer(file);
   }, []);

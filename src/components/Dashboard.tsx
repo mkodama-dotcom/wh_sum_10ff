@@ -5,7 +5,7 @@ import { useWorkData } from '../hooks/useWorkData';
 
 export function Dashboard() {
   const [useMock, setUseMock] = useState(true);
-  const { siteBlocks, targetMonth, loading, error, loadFile } = useWorkData(useMock);
+  const { siteBlocks, targetMonth, loading, error, notice, loadFile } = useWorkData(useMock);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -29,6 +29,12 @@ export function Dashboard() {
       <main className="max-w-5xl mx-auto px-6">
         {!useMock && (
           <FileUploader onFile={loadFile} />
+        )}
+
+        {notice && (
+          <div className="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded px-4 py-3 mb-4 text-sm">
+            ⚠️ {notice}
+          </div>
         )}
 
         {error && (
