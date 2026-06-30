@@ -4,12 +4,12 @@ import type { WorkRecord, AdjustRecord, SiteBlock } from '../utils/dataTypes';
 import { aggregateData, buildSiteBlocks } from '../utils/aggregation';
 import { mockSheet1, mockSheet2 } from '../utils/mockData';
 
-function parseWorkHours(raw: unknown): number {
-  if (raw == null || raw === 'なし' || raw === '') return 0;
-  const n = Number(raw);
-  if (isNaN(n)) return 0;
-  // ExcelのシリアルK値は1=24時間の小数なので常に×24して時間に変換
-  return n * 24;
+function parseWorkHours(val: unknown): number {
+  if (val === null || val === undefined || val === 'なし') return 0;
+  const num = Number(val);
+  if (isNaN(num)) return 0;
+  // Excelシリアル値（1=24時間）なので×24して時間に変換
+  return num * 24;
 }
 
 function parseSheet1Row(row: Record<string, unknown>): WorkRecord | null {
@@ -84,6 +84,9 @@ export function useWorkData(useMock = false) {
 
         console.log('[useWorkData] シート1 生データ行数:', s1.length);
         console.log('[useWorkData] シート1 先頭3行:', JSON.stringify(s1.slice(0, 3), null, 2));
+        // K列の生値を確認（× 24 前）
+        const kSamples = s1.slice(3, 8).map((r) => ({ K生値: r['K'], K変換後: (Number(r['K']) * 24).toFixed(2) + 'h' }));
+        console.log('[useWorkData] K列サンプル（データ行4〜8）:', kSamples);
         console.log('[useWorkData] シート2 生データ行数:', s2.length);
 
         // 1〜2行目はタイトル/空行、3行目がヘッダーのためslice(3)でデータ行から開始
