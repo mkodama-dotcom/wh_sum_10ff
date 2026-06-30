@@ -77,9 +77,10 @@ export function useWorkData(useMock = false) {
           throw new Error(`シート「${sheet1Name}」が見つかりません。シート一覧: ${workbook.SheetNames.join(', ')}`);
         }
 
-        const s1 = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheet1Name], { header: 'A' });
-        const s2 = sheet2Name
-          ? XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheet2Name], { header: 'A' })
+        // defval: null で空セルを null として取得（空行も行として取り込み、B列=1フィルターで除外）
+        const s1 = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheet1Name], { header: 'A', defval: null });
+        const s2 = workbook.Sheets[sheet2Name]
+          ? XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheet2Name], { header: 'A', defval: null })
           : [];
 
         console.log('[useWorkData] シート1 生データ行数:', s1.length);
