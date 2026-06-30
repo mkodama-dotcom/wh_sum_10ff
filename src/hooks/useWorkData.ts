@@ -43,7 +43,7 @@ function parseSheet2Row(row: Record<string, unknown>): AdjustRecord | null {
   const site = String(row['D'] ?? '').trim();
   const prj = String(row['E'] ?? '').trim();
   const role = String(row['F'] ?? '').trim();
-  const adjustHours = Number(row['J'] ?? 0);
+  const adjustHours = parseWorkHours(row['J']);
 
   if (!site) return null;
   return { flag, employeeType, site, prj, role, adjustHours };
