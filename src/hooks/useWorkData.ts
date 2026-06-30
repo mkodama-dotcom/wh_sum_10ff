@@ -86,20 +86,33 @@ export function useWorkData(useMock = false) {
           throw new Error(`シート「${sheet1Name}」が見つかりません。シート一覧: ${workbook.SheetNames.join(', ')}`);
         }
 
-        // defval: null で空セルを null として取得（空行も行として取り込み、B列=1フィルターで除外）
-        const s1 = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheet1Name], { header: 'A', defval: null });
+        // 非表示行をスキップしながら行データをオブジェクト配列に変換するヘルパー
+        function sheetToRowsSkippingHidden(ws: XLSX.WorkSheet): Record<string, unknown>[] {
+          const ref = ws['!ref'];
+          if (!ref) return [];
+          const range = XLSX.utils.decode_range(ref);
+          const rows: Record<string, unknown>[] = [];
+          for (let R = range.s.r; R <= range.e.r; R++) {
+            // グループ化・非表示行をスキップ
+            if (ws['!rows']?.[R]?.hidden) continue;
+            const row: Record<string, unknown> = {};
+            for (let C = range.s.c; C <= range.e.c; C++) {
+              const colLetter = XLSX.utils.encode_col(C);
+              const cellAddr = XLSX.utils.encode_cell({ r: R, c: C });
+              row[colLetter] = ws[cellAddr]?.v ?? null;
+            }
+            rows.push(row);
+          }
+          return rows;
+        }
+
+        const s1 = sheetToRowsSkippingHidden(workbook.Sheets[sheet1Name]);
         const s2 = workbook.Sheets[sheet2Name]
-          ? XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheet2Name], { header: 'A', defval: null })
+          ? sheetToRowsSkippingHidden(workbook.Sheets[sheet2Name])
           : [];
 
-        console.log('[useWorkData] シート1 生データ行数:', s1.length);
-        console.log('[useWorkData] シート1 先頭3行:', JSON.stringify(s1.slice(0, 3), null, 2));
-        // パース後の先頭5レコードで role（F列=担当）が正しいか確認
-        const colSamples = s1.slice(0, 10).map((r, i) => ({
-          idx: i, B: r['B'], D: r['D'], E: r['E'], F: r['F'], K: r['K'],
-        }));
-        console.log('[useWorkData] 全列サンプル（index0〜9）:', colSamples);
-        console.log('[useWorkData] シート2 生データ行数:', s2.length);
+        console.log('[useWorkData] シート1 生データ行数（非表示除外後）:', s1.length);
+        console.log('[useWorkData] シート2 生データ行数（非表示除外後）:', s2.length);
 
         // SheetJSは空行をスキップするため実質2行（タイトル・ヘッダー）のみ先頭にある
         // index0=タイトル, index1=ヘッダー, index2=データ開始
