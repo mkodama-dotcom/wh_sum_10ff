@@ -28,7 +28,7 @@ export function Dashboard() {
 
       <main className="max-w-5xl mx-auto px-6">
         {!useMock && (
-          <FileUploader onFile={loadFile} loading={loading} />
+          <FileUploader onFile={loadFile} />
         )}
 
         {error && (

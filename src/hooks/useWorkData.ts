@@ -46,7 +46,8 @@ export function useWorkData(useMock = false) {
     return { siteBlocks: [], targetMonth: '', loading: false, error: null };
   });
 
-  const loadFile = useCallback((file: File, targetMonth: string) => {
+  const loadFile = useCallback((file: File) => {
+    const targetMonth = '';
     console.log('[useWorkData] loadFile 開始:', file.name, targetMonth);
     setState((s) => ({ ...s, loading: true, error: null }));
 
