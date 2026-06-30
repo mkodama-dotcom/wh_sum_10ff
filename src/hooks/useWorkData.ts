@@ -112,7 +112,7 @@ export function useWorkData(useMock = false) {
         const inabeKaibaiPart = sheet1Records.filter(
           (r) => r.site === 'いなべ' && r.role === '栽培' && r.employeeType === 'アルバイト'
         );
-        console.log('[DEBUG] いなべ×栽培×アルバイト レコード一覧:', inabeKaibaiPart);
+        console.log('[DEBUG] いなべ×栽培×アルバイト レコード一覧:', JSON.stringify(inabeKaibaiPart, null, 2));
         console.log('[DEBUG] いなべ×栽培×アルバイト 件数:', inabeKaibaiPart.length, '  合計時間:', inabeKaibaiPart.reduce((s, r) => s + r.workHours, 0));
 
         const inabeKaibaiEmp = sheet1Records.filter(
