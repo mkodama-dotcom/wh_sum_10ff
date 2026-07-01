@@ -374,10 +374,16 @@ function buildSiteBlocks(rows) {
 
 function parseWorkHours(val) {
   if (val === null || val === undefined || val === '' || val === 'なし') return 0;
-  // GAS の getValues() は timedelta セルをミリ秒値として返す
+  if (val instanceof Date) {
+    // GAS は timedelta セルを 1900-01-01 基準の Date オブジェクトで返す
+    // Excel の基準日 1899-12-30 からの経過ミリ秒を時間に変換
+    var baseDate = new Date(1899, 11, 30, 0, 0, 0, 0);
+    var ms = val.getTime() - baseDate.getTime();
+    return ms / 3600000;
+  }
   var num = Number(val);
   if (isNaN(num)) return 0;
-  return num / 1000 / 3600;
+  return num / 3600000;
 }
 
 function parseYearMonth(val) {
