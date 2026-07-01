@@ -527,22 +527,29 @@ function loadSavedUrl() {
 }
 
 async function fetchFromGAS(month) {
+  console.log('[GAS] データ取得ボタン押下');
   const baseUrl = (localStorage.getItem(GAS_URL_KEY) || '').trim();
+  console.log('[GAS] 保存済みURL:', baseUrl || '（未設定）');
   if (!baseUrl) {
     showError('GAS WebアプリURLを設定してください（⚙️ アイコン横の入力欄）');
     return;
   }
   const url = month ? baseUrl + '?month=' + encodeURIComponent(month) : baseUrl;
+  console.log('[GAS] fetchURL:', url);
   document.getElementById('fetch-btn').textContent = '⏳ 取得中...';
   document.getElementById('msg-error').classList.add('hidden');
   document.getElementById('msg-info').classList.add('hidden');
   try {
+    console.log('[GAS] fetch開始...');
     const res = await fetch(url);
+    console.log('[GAS] レスポンス status:', res.status, 'ok:', res.ok);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const json = await res.json();
+    console.log('[GAS] レスポンスJSON:', JSON.stringify(json).slice(0, 500));
     if (json.error) throw new Error(json.error);
     displayGASResult(json);
   } catch (err) {
+    console.error('[GAS] エラー:', err);
     showError('データ取得エラー: ' + err.message);
   } finally {
     document.getElementById('fetch-btn').textContent = '🔄 データ取得';
