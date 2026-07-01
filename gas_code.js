@@ -359,10 +359,10 @@ function buildSiteBlocks(rows) {
 
 function parseWorkHours(val) {
   if (val === null || val === undefined || val === '' || val === 'なし') return 0;
-  // Google スプレッドシートの時間値は Duration 型（1=24h のシリアル値）
+  // GAS の getValues() は timedelta セルをミリ秒値として返す
   var num = Number(val);
   if (isNaN(num)) return 0;
-  return num * 24;
+  return num / 1000 / 3600;
 }
 
 function parseYearMonth(val) {
