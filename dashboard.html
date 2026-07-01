@@ -105,11 +105,22 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     <h1>勤務時間集計ダッシュボード</h1>
     <div class="subtext" id="target-month-label"></div>
   </div>
-  <label class="upload-btn">
-    📂 Excelを読み込む
-    <input type="file" id="file-input" accept=".xlsx">
-  </label>
+  <div style="display:flex;align-items:center;gap:8px">
+    <select id="month-select" style="display:none;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:6px;padding:6px 10px;font-size:13px"></select>
+    <button class="upload-btn" id="fetch-btn" onclick="fetchFromGAS()">🔄 データ取得</button>
+    <label class="upload-btn" title="GAS WebアプリURL を設定">⚙️
+      <input type="file" id="file-input" accept=".xlsx" style="display:none">
+    </label>
+  </div>
 </header>
+
+<div id="gas-url-bar" style="background:#f0f4ff;border-bottom:1px solid #c7d2fe;padding:10px 24px;display:flex;align-items:center;gap:8px;max-width:100%">
+  <label style="font-size:13px;color:#4338ca;white-space:nowrap;font-weight:600">GAS WebアプリURL：</label>
+  <input id="gas-url-input" type="text" placeholder="https://script.google.com/macros/s/xxxxxx/exec"
+    style="flex:1;padding:6px 10px;border:1px solid #c7d2fe;border-radius:6px;font-size:13px;max-width:640px">
+  <button onclick="saveGasUrl()" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer">保存</button>
+  <span id="gas-url-status" style="font-size:12px;color:#666"></span>
+</div>
 
 <div class="tabs hidden" id="tabs">
   <button class="tab-btn active" data-tab="table">集計表</button>
@@ -499,13 +510,83 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => showTab(btn.dataset.tab));
 });
 
-// ─── ファイル読み込み ─────────────────────────────────────
+// ─── GAS フェッチ ──────────────────────────────────────────
+
+const GAS_URL_KEY = 'gasWebAppUrl';
+
+function saveGasUrl() {
+  const url = document.getElementById('gas-url-input').value.trim();
+  localStorage.setItem(GAS_URL_KEY, url);
+  document.getElementById('gas-url-status').textContent = '保存しました';
+  setTimeout(() => { document.getElementById('gas-url-status').textContent = ''; }, 2000);
+}
+
+function loadSavedUrl() {
+  const saved = localStorage.getItem(GAS_URL_KEY) || '';
+  document.getElementById('gas-url-input').value = saved;
+}
+
+async function fetchFromGAS(month) {
+  const baseUrl = (localStorage.getItem(GAS_URL_KEY) || '').trim();
+  if (!baseUrl) {
+    showError('GAS WebアプリURLを設定してください（⚙️ アイコン横の入力欄）');
+    return;
+  }
+  const url = month ? baseUrl + '?month=' + encodeURIComponent(month) : baseUrl;
+  document.getElementById('fetch-btn').textContent = '⏳ 取得中...';
+  document.getElementById('msg-error').classList.add('hidden');
+  document.getElementById('msg-info').classList.add('hidden');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    displayGASResult(json);
+  } catch (err) {
+    showError('データ取得エラー: ' + err.message);
+  } finally {
+    document.getElementById('fetch-btn').textContent = '🔄 データ取得';
+  }
+}
+
+function displayGASResult(json) {
+  const { targetMonth, availableMonths, siteBlocks } = json;
+  window._siteBlocks = siteBlocks;
+
+  if (targetMonth) {
+    document.getElementById('target-month-label').textContent = '対象月：' + targetMonth;
+  }
+
+  // 月選択プルダウンを更新
+  const sel = document.getElementById('month-select');
+  if (availableMonths && availableMonths.length > 1) {
+    sel.innerHTML = availableMonths.map(m =>
+      `<option value="${m}"${m === targetMonth ? ' selected' : ''}>${m}</option>`
+    ).join('');
+    sel.style.display = '';
+    sel.onchange = () => fetchFromGAS(sel.value);
+  } else {
+    sel.style.display = 'none';
+  }
+
+  renderTable(siteBlocks);
+  document.getElementById('tab-table').classList.remove('hidden');
+  document.getElementById('tab-chart').classList.add('hidden');
+  document.getElementById('tabs').classList.remove('hidden');
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === 'table');
+  });
+}
+
+// ─── Excelファイル読み込み（フォールバック） ──────────────
 
 document.getElementById('file-input').addEventListener('change', function () {
   const file = this.files[0];
   if (!file) return;
   loadExcel(file);
 });
+
+loadSavedUrl();  // ページ読み込み時にURLを復元
 
 function showError(msg) {
   const el = document.getElementById('msg-error');
