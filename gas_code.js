@@ -13,33 +13,39 @@ function doGet(e) {
   try {
     var params = e && e.parameter ? e.parameter : {};
     var requestMonth = params.month || '';
-    var debugMode = params.debug === '1';
+    var debugMode    = params.debug === '1';
 
     var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-
-    // シート名を実際の名前で取得（存在確認用）
     var allSheetNames = ss.getSheets().map(function(s) { return s.getName(); });
     var ws1 = ss.getSheetByName('シート1');
     var ws2 = ss.getSheetByName('シート2');
     var ws4 = ss.getSheetByName('シート4');
 
-    // デバッグモード: シート名と先頭行の生データを返す
+    // ── デバッグモード (?debug=1) ──
     if (debugMode) {
-      var debug = { sheetNames: allSheetNames };
+      var dbg = { sheetNames: allSheetNames };
       if (ws1) {
         var raw = ws1.getDataRange().getValues();
-        debug.sheet1_rows_total = raw.length;
-        debug.sheet1_row1 = raw[0] ? raw[0].map(function(v) { return String(v).slice(0,30); }) : [];
-        debug.sheet1_row2 = raw[1] ? raw[1].map(function(v) { return String(v).slice(0,30); }) : [];
-        debug.sheet1_row3 = raw[2] ? raw[2].map(function(v) { return String(v).slice(0,30); }) : [];
-        debug.sheet1_row4 = raw[3] ? raw[3].map(function(v) { return String(v).slice(0,30); }) : [];
-        debug.sheet1_row5 = raw[4] ? raw[4].map(function(v) { return String(v).slice(0,30); }) : [];
-        // 2行目の各セル型と値（年月検索用）
-        debug.sheet1_row2_types = raw[1] ? raw[1].map(function(v) {
-          return { type: typeof v, val: String(v).slice(0,30), isDate: v instanceof Date };
-        }) : [];
+        dbg.sheet1_rows_total = raw.length;
+        ['row1','row2','row3','row4','row5'].forEach(function(k, i) {
+          dbg['sheet1_' + k] = (raw[i] || []).map(function(v) {
+            return { val: String(v).slice(0,30), type: typeof v, isDate: v instanceof Date };
+          });
+        });
       }
-      return ContentService.createTextOutput(JSON.stringify(debug)).setMimeType(ContentService.MimeType.JSON);
+      if (ws2) {
+        var r2 = ws2.getDataRange().getValues();
+        dbg.sheet2_rows_total = r2.length;
+        dbg.sheet2_row4 = (r2[3] || []).map(function(v) { return String(v).slice(0,30); });
+        dbg.sheet2_row5 = (r2[4] || []).map(function(v) { return String(v).slice(0,30); });
+      }
+      if (ws4) {
+        var r4 = ws4.getDataRange().getValues();
+        dbg.sheet4_rows_total = r4.length;
+        dbg.sheet4_row1 = (r4[0] || []).map(function(v) { return String(v).slice(0,30); });
+        dbg.sheet4_row2 = (r4[1] || []).map(function(v) { return String(v).slice(0,30); });
+      }
+      return ContentService.createTextOutput(JSON.stringify(dbg)).setMimeType(ContentService.MimeType.JSON);
     }
 
     if (!ws1) throw new Error('シート1が見つかりません。シート名一覧: ' + allSheetNames.join(', '));
@@ -48,46 +54,42 @@ function doGet(e) {
     var s2 = ws2 ? ws2.getDataRange().getValues() : [];
     var s4 = ws4 ? ws4.getDataRange().getValues() : [];
 
+    // 年月一覧と対象月を決定
     var yearMonthCols = getYearMonthCols(s1);
-
     var targetMonth = requestMonth;
     if (!targetMonth && yearMonthCols.length > 0) {
-      var sorted = yearMonthCols.slice().sort(function(a, b) {
+      targetMonth = yearMonthCols.slice().sort(function(a, b) {
         return a.yearMonth < b.yearMonth ? 1 : -1;
-      });
-      targetMonth = sorted[0].yearMonth;
+      })[0].yearMonth;
     }
 
-    var targetCol = -1;
+    // 対象月の時間列を特定
+    var targetHoursCol = -1;
     for (var i = 0; i < yearMonthCols.length; i++) {
       if (yearMonthCols[i].yearMonth === targetMonth) {
-        targetCol = yearMonthCols[i].col;
+        targetHoursCol = yearMonthCols[i].hoursCol;
         break;
       }
     }
-    var sheet1Records = parseSheet1(s1, targetCol);
+
+    var sheet1Records = parseSheet1(s1, targetHoursCol);
     var sheet2Records = parseSheet2(s2, targetMonth);
+    var aggregated    = aggregateData(sheet1Records, sheet2Records, targetMonth);
+    var siteBlocks    = buildSiteBlocks(aggregated);
+    var sheet4Data    = parseSheet4(s4, targetMonth);
 
-    var aggregated = aggregateData(sheet1Records, sheet2Records, targetMonth);
-    var siteBlocks = buildSiteBlocks(aggregated);
-    var sheet4Data = parseSheet4(s4, targetMonth);
-
-    var result = {
-      targetMonth: targetMonth,
+    return ContentService.createTextOutput(JSON.stringify({
+      targetMonth:     targetMonth,
       availableMonths: yearMonthCols.map(function(x) { return x.yearMonth; }).sort().reverse(),
-      siteBlocks: siteBlocks,
-      sheet4: sheet4Data,
+      siteBlocks:      siteBlocks,
+      sheet4:          sheet4Data,
       _debug: {
         sheet1Records: sheet1Records.length,
         sheet2Records: sheet2Records.length,
         yearMonthCols: yearMonthCols,
-        targetCol: targetCol
+        targetHoursCol: targetHoursCol
       }
-    };
-
-    return ContentService
-      .createTextOutput(JSON.stringify(result))
-      .setMimeType(ContentService.MimeType.JSON);
+    })).setMimeType(ContentService.MimeType.JSON);
 
   } catch (err) {
     return ContentService
@@ -97,41 +99,42 @@ function doGet(e) {
 }
 
 // ── シート1 パース ────────────────────────────────────────
+// 列構造:
+//   A(0)=None  B(1)=Flag  C(2)=雇用区分  D(3)=拠点  E(4)=PRJ  F(5)=担当
+//   G(6)=社員番号  H(7)=名前
+//   年月: row1 の index 8, 11, 14... (3列おき)
+//   時間: 年月列 + 2 = index 10, 13, 16...
+// 行構造: 1行目=タイトル, 2行目=年月, 3行目=ヘッダー, 4行目(index3)以降=データ
 
 function getYearMonthCols(data) {
-  // 2行目（index 1）の K列（index 10）から3列おきに年月を取得
-  var headerRow = data[1] || [];
+  var ymRow = data[1] || [];  // 2行目（index 1）に年月
   var result = [];
-  for (var c = 10; c < headerRow.length; c += 3) {
-    var ym = parseYearMonth(headerRow[c]);
-    if (ym) result.push({ col: c, yearMonth: ym });
+  for (var c = 8; c < ymRow.length; c += 3) {
+    var ym = parseYearMonth(ymRow[c]);
+    if (ym) result.push({ ymCol: c, hoursCol: c + 2, yearMonth: ym });
   }
   return result;
 }
 
-function parseSheet1(data, targetCol) {
+function parseSheet1(data, targetHoursCol) {
   var records = [];
-  // 4行目（index 3）からデータ開始（1:タイトル, 2:年月, 3:ヘッダー）
-  for (var r = 3; r < data.length; r++) {
+  for (var r = 3; r < data.length; r++) {  // index 3 = 4行目からデータ
     var row = data[r];
-    // A列（index 0）= flag（値が数値の1のみ対象）
-    if (Number(row[0]) !== 1) continue;
+    if (Number(row[1]) !== 1) continue;     // B(index1) = flag
 
-    var employeeType = String(row[1] || '').trim();  // B = 雇用区分
-    var site         = String(row[2] || '').trim();  // C = 拠点
-    var prj          = String(row[3] || '').trim();  // D = PRJ
-    var role         = String(row[4] || '').trim();  // E = 担当
-    var gVal         = String(row[5] || '').trim();  // F = 社員番号
-    var hVal         = String(row[6] || '').trim();  // G = 名前
+    var employeeType = String(row[2] || '').trim();   // C = 雇用区分
+    var site         = String(row[3] || '').trim();   // D = 拠点
+    var prj          = String(row[4] || '').trim();   // E = PRJ
+    var role         = String(row[5] || '').trim();   // F = 担当
+    var gVal         = String(row[6] || '').trim();   // G = 社員番号
+    var hVal         = String(row[7] || '').trim();   // H = 名前
     var employeeId   = (gVal && gVal !== '0') ? 'id:' + gVal : (hVal ? 'name:' + hVal : '');
 
     if (!site || !role) continue;
     if (EXCLUDE_ROLES.indexOf(role) >= 0) continue;
 
-    var workHours = 0;
-    if (targetCol >= 0 && targetCol < row.length) {
-      workHours = parseWorkHours(row[targetCol]);
-    }
+    var workHours = (targetHoursCol >= 0 && targetHoursCol < row.length)
+      ? parseWorkHours(row[targetHoursCol]) : 0;
     if (workHours === 0) continue;
 
     records.push({ employeeType: employeeType, site: site, prj: prj, role: role,
@@ -141,23 +144,24 @@ function parseSheet1(data, targetCol) {
 }
 
 // ── シート2 パース ────────────────────────────────────────
+// 列構造:
+//   B(1)=Flag  D(3)=拠点  E(4)=PRJ  F(5)=担当  I(8)=計上年月  J(9)=増減時間
+// 行構造: 1〜2行目=空, 3行目=ヘッダー, 4行目(index3)以降=データ
 
 function parseSheet2(data, targetYearMonth) {
   var records = [];
-  // 4行目（index 3）からデータ開始（シート1と同じ構造を想定）
-  for (var r = 3; r < data.length; r++) {
+  for (var r = 3; r < data.length; r++) {  // index 3 = 4行目からデータ
     var row = data[r];
-    if (Number(row[0]) !== 1) continue;   // A列（index 0）= flag
+    if (Number(row[1]) !== 1) continue;    // B(index1) = flag
 
-    // H列（index 7）の計上年月フィルター（シート1と同列ずれを反映）
-    var rowYM = parseYearMonth(row[7]);
+    var rowYM = parseYearMonth(row[8]);    // I(index8) = 計上年月
     if (rowYM !== targetYearMonth) continue;
 
-    var employeeType = String(row[1] || '').trim();  // B = 雇用区分
-    var site         = String(row[2] || '').trim();  // C = 拠点
-    var prj          = String(row[3] || '').trim();  // D = PRJ
-    var role         = String(row[4] || '').trim();  // E = 担当
-    var adjustHours  = parseWorkHours(row[8]);       // I列（index 8）= 増減時間
+    var employeeType = String(row[2] || '').trim();  // C = 雇用区分
+    var site         = String(row[3] || '').trim();  // D = 拠点
+    var prj          = String(row[4] || '').trim();  // E = PRJ
+    var role         = String(row[5] || '').trim();  // F = 担当
+    var adjustHours  = parseWorkHours(row[9]);       // J(index9) = 増減時間
 
     if (!site) continue;
     records.push({ employeeType: employeeType, site: site, prj: prj, role: role,
@@ -167,31 +171,45 @@ function parseSheet2(data, targetYearMonth) {
 }
 
 // ── シート4 パース ────────────────────────────────────────
+// 列構造:
+//   A(0)=拠点（結合）  B(1)=カテゴリ  C(2)=項目名  D(3)以降=各月の値
+// 行構造: 1行目=年月（index3以降に 202604, 202605... の数値）, 2行目以降=データ
 
 function parseSheet4(data, targetYearMonth) {
   if (!data || data.length < 2) return null;
 
-  // 1行目（index 0）に年月が並ぶ。対象月の列を探す
   var headerRow = data[0];
   var targetCol = -1;
-  for (var c = 1; c < headerRow.length; c++) {
-    if (parseYearMonth(headerRow[c]) === targetYearMonth) {
+  for (var c = 3; c < headerRow.length; c++) {
+    if (parseYearMonthFromNumber(headerRow[c]) === targetYearMonth) {
       targetCol = c;
       break;
     }
   }
 
-  // 拠点（A列）× 項目（B列）→ 対象月の値 を返す
   var rows = [];
+  var lastSite = '';
   for (var r = 1; r < data.length; r++) {
     var row = data[r];
-    var site  = String(row[0] || '').trim();
-    var item  = String(row[1] || '').trim();
-    var value = targetCol >= 0 ? row[targetCol] : null;
-    if (!site && !item) continue;
-    rows.push({ site: site, item: item, value: value });
+    var site = String(row[0] || '').trim();
+    if (site) lastSite = site;        // 結合セルの省略を補完
+    var category = String(row[1] || '').trim();
+    var item     = String(row[2] || '').trim();
+    var value    = targetCol >= 0 ? row[targetCol] : null;
+    if (!category && !item) continue;
+    rows.push({ site: lastSite, category: category, item: item, value: value });
   }
   return { targetCol: targetCol, rows: rows };
+}
+
+// 202604 → "2026-04" 形式に変換
+function parseYearMonthFromNumber(val) {
+  var num = Number(val);
+  if (isNaN(num) || num < 190001 || num > 210012) return null;
+  var y = Math.floor(num / 100);
+  var m = num % 100;
+  if (m < 1 || m > 12) return null;
+  return y + '-' + (m < 10 ? '0' + m : String(m));
 }
 
 // ── 集計ロジック ──────────────────────────────────────────
@@ -218,9 +236,9 @@ function aggregateSheet1(records) {
 }
 
 function applyAdjustments(base, adjustRecords, site) {
-  var result = JSON.parse(JSON.stringify(base));
-  // employeeIds を再構築（JSON.parseで消えるため）
-  for (var k in base) result[k].employeeIds = base[k].employeeIds;
+  // ディープコピー（employeeIdsは参照を保持）
+  var result = {};
+  for (var k in base) result[k] = { totalHours: base[k].totalHours, employeeIds: base[k].employeeIds };
 
   for (var i = 0; i < adjustRecords.length; i++) {
     var adj = adjustRecords[i];
@@ -233,7 +251,7 @@ function applyAdjustments(base, adjustRecords, site) {
       // D=E: 研修（減算のみ）
       if (result[fromKey]) result[fromKey].totalHours -= adj.adjustHours;
     } else {
-      // D≠E: 振替（F列から減算、E列へ加算）
+      // D≠E: 振替（F列=担当から減算、E列=PRJへ加算）
       if (result[fromKey]) result[fromKey].totalHours -= adj.adjustHours;
       var toKey = site + '|' + adj.prj + '|' + category;
       if (!result[toKey]) result[toKey] = { totalHours: 0, employeeIds: {} };
@@ -245,8 +263,6 @@ function applyAdjustments(base, adjustRecords, site) {
 
 function aggregateData(sheet1, sheet2, targetMonth) {
   var base = aggregateSheet1(sheet1);
-
-  // 拠点一覧
   var sites = {};
   for (var i = 0; i < sheet1.length; i++) sites[sheet1[i].site] = true;
 
@@ -264,8 +280,7 @@ function aggregateData(sheet1, sheet2, targetMonth) {
     rows.push({
       yearMonth: targetMonth,
       site: parts[0], role: parts[1], employeeCategory: parts[2],
-      totalHours: val.totalHours,
-      headcount: headcount,
+      totalHours: val.totalHours, headcount: headcount,
       avgHours: headcount > 0 ? val.totalHours / headcount : 0
     });
   }
@@ -287,18 +302,18 @@ function buildSiteBlocks(rows) {
     var deliveryEmp  = { totalHours: 0, headcount: 0 };
     var deliveryPart = { totalHours: 0, headcount: 0 };
     var regularRoles = [];
-    var hasDelivery = false;
+    var hasDelivery  = false;
 
     for (var role in roleMap) {
       var cats = roleMap[role];
       if (DELIVERY_ROLES.indexOf(role) >= 0) {
         hasDelivery = true;
         if (cats.employee) { deliveryEmp.totalHours  += cats.employee.totalHours;  deliveryEmp.headcount  += cats.employee.headcount; }
-        if (cats.part)     { deliveryPart.totalHours += cats.part.totalHours;     deliveryPart.headcount += cats.part.headcount; }
+        if (cats.part)     { deliveryPart.totalHours += cats.part.totalHours;      deliveryPart.headcount += cats.part.headcount; }
         continue;
       }
       var emp = cats.employee || null;
-      var prt = cats.part || null;
+      var prt = cats.part     || null;
       regularRoles.push({
         role: role,
         employee: emp ? { totalHours: emp.totalHours, headcount: emp.headcount, avgHours: emp.avgHours } : null,
@@ -329,13 +344,11 @@ function buildSiteBlocks(rows) {
     }
 
     blocks.push({
-      site: site,
-      roles: displayRoles,
+      site: site, roles: displayRoles,
       total: {
         employee: totalEmpN  > 0 ? { totalHours: totalEmpH,  headcount: totalEmpN  } : null,
         part:     totalPartN > 0 ? { totalHours: totalPartH, headcount: totalPartN } : null,
-        totalHours: totalEmpH + totalPartH,
-        headcount:  totalEmpN + totalPartN
+        totalHours: totalEmpH + totalPartH, headcount: totalEmpN + totalPartN
       }
     });
   }
@@ -346,40 +359,34 @@ function buildSiteBlocks(rows) {
 
 function parseWorkHours(val) {
   if (val === null || val === undefined || val === '' || val === 'なし') return 0;
+  // Google スプレッドシートの時間値は Duration 型（1=24h のシリアル値）
   var num = Number(val);
   if (isNaN(num)) return 0;
-  // Googleスプレッドシートの時間値はシリアル値（1=24h）
   return num * 24;
 }
 
 function parseYearMonth(val) {
   if (val === null || val === undefined || val === '') return null;
-  // Date オブジェクトの場合
   if (val instanceof Date) {
     var y = val.getFullYear();
-    var m = String(val.getMonth() + 1).padStart('00', 2);
-    return y + '-' + m;
+    var m = val.getMonth() + 1;
+    return y + '-' + (m < 10 ? '0' + m : String(m));
   }
-  var num = Number(val);
-  if (!isNaN(num) && num > 0) {
-    // Excelシリアル日付
-    var d = new Date(Math.round((num - 25569) * 86400 * 1000));
-    var y2 = d.getUTCFullYear();
-    var m2 = String(d.getUTCMonth() + 1);
-    if (m2.length < 2) m2 = '0' + m2;
-    return y2 + '-' + m2;
-  }
+  // 202604 形式の数値
+  var asNum = parseYearMonthFromNumber(val);
+  if (asNum) return asNum;
+  // "YYYY-MM" / "YYYY/MM" 形式の文字列
   var str = String(val).trim();
   var match = str.match(/^(\d{4})[\/\-](\d{2})/);
   if (match) return match[1] + '-' + match[2];
   return null;
 }
 
-// String.prototype.padStart は Apps Script では使えない場合があるため代替
-if (!String.prototype.padStart) {
-  String.prototype.padStart = function(targetLength, padString) {
-    var str = String(this);
-    while (str.length < targetLength) str = padString + str;
-    return str;
-  };
+function parseYearMonthFromNumber(val) {
+  var num = Number(val);
+  if (isNaN(num) || num < 190001 || num > 210012) return null;
+  var y = Math.floor(num / 100);
+  var m = num % 100;
+  if (m < 1 || m > 12) return null;
+  return y + '-' + (m < 10 ? '0' + m : String(m));
 }
