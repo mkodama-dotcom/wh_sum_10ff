@@ -32,6 +32,21 @@ function doGet(e) {
             return { val: String(v).slice(0,30), type: typeof v, isDate: v instanceof Date };
           });
         });
+        // K列（index10）の生値デバッグ
+        var dataRow = raw[3] || [];
+        var testVal = dataRow[10];
+        Logger.log('K列生値: ' + testVal + ' type: ' + typeof testVal);
+        dbg.k_col_debug = {
+          k_raw:    String(testVal),
+          k_type:   typeof testVal,
+          k_json:   JSON.stringify(testVal),
+          k_number: Number(testVal),
+          k_isDate: testVal instanceof Date,
+          // 各変換式での結果
+          as_times24:       Number(testVal) * 24,
+          as_div1000_3600:  Number(testVal) / 1000 / 3600,
+          as_serial_days:   Number(testVal) / 86400 / 1000
+        };
       }
       if (ws2) {
         var r2 = ws2.getDataRange().getValues();
