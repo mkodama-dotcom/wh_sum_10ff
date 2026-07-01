@@ -12,23 +12,44 @@ var DELIVERY_ROLES = ['配送・栽培', '配送・出荷'];
 function doGet(e) {
   try {
     var params = e && e.parameter ? e.parameter : {};
-    var requestMonth = params.month || '';   // 例: "2026-06"（省略時は最新月）
+    var requestMonth = params.month || '';
+    var debugMode = params.debug === '1';
 
     var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+    // シート名を実際の名前で取得（存在確認用）
+    var allSheetNames = ss.getSheets().map(function(s) { return s.getName(); });
     var ws1 = ss.getSheetByName('シート1');
     var ws2 = ss.getSheetByName('シート2');
     var ws4 = ss.getSheetByName('シート4');
 
-    if (!ws1) throw new Error('シート1が見つかりません');
+    // デバッグモード: シート名と先頭行の生データを返す
+    if (debugMode) {
+      var debug = { sheetNames: allSheetNames };
+      if (ws1) {
+        var raw = ws1.getDataRange().getValues();
+        debug.sheet1_rows_total = raw.length;
+        debug.sheet1_row1 = raw[0] ? raw[0].map(function(v) { return String(v).slice(0,30); }) : [];
+        debug.sheet1_row2 = raw[1] ? raw[1].map(function(v) { return String(v).slice(0,30); }) : [];
+        debug.sheet1_row3 = raw[2] ? raw[2].map(function(v) { return String(v).slice(0,30); }) : [];
+        debug.sheet1_row4 = raw[3] ? raw[3].map(function(v) { return String(v).slice(0,30); }) : [];
+        debug.sheet1_row5 = raw[4] ? raw[4].map(function(v) { return String(v).slice(0,30); }) : [];
+        // 2行目の各セル型と値（年月検索用）
+        debug.sheet1_row2_types = raw[1] ? raw[1].map(function(v) {
+          return { type: typeof v, val: String(v).slice(0,30), isDate: v instanceof Date };
+        }) : [];
+      }
+      return ContentService.createTextOutput(JSON.stringify(debug)).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (!ws1) throw new Error('シート1が見つかりません。シート名一覧: ' + allSheetNames.join(', '));
 
     var s1 = ws1.getDataRange().getValues();
     var s2 = ws2 ? ws2.getDataRange().getValues() : [];
     var s4 = ws4 ? ws4.getDataRange().getValues() : [];
 
-    // シート1 の年月一覧を取得（2行目 = index 1、K列 = index 10 から3列おき）
-    var yearMonthCols = getYearMonthCols(s1);  // [ { col, yearMonth }, ... ]
+    var yearMonthCols = getYearMonthCols(s1);
 
-    // 対象月を決定（未指定なら最新月）
     var targetMonth = requestMonth;
     if (!targetMonth && yearMonthCols.length > 0) {
       var sorted = yearMonthCols.slice().sort(function(a, b) {
@@ -37,7 +58,6 @@ function doGet(e) {
       targetMonth = sorted[0].yearMonth;
     }
 
-    // シート1 レコードをパース（対象月のみ）
     var targetCol = -1;
     for (var i = 0; i < yearMonthCols.length; i++) {
       if (yearMonthCols[i].yearMonth === targetMonth) {
@@ -46,22 +66,23 @@ function doGet(e) {
       }
     }
     var sheet1Records = parseSheet1(s1, targetCol);
-
-    // シート2 レコードをパース（I列の年月フィルター）
     var sheet2Records = parseSheet2(s2, targetMonth);
 
-    // 集計
     var aggregated = aggregateData(sheet1Records, sheet2Records, targetMonth);
     var siteBlocks = buildSiteBlocks(aggregated);
-
-    // シート4 をそのまま返す
     var sheet4Data = parseSheet4(s4, targetMonth);
 
     var result = {
       targetMonth: targetMonth,
       availableMonths: yearMonthCols.map(function(x) { return x.yearMonth; }).sort().reverse(),
       siteBlocks: siteBlocks,
-      sheet4: sheet4Data
+      sheet4: sheet4Data,
+      _debug: {
+        sheet1Records: sheet1Records.length,
+        sheet2Records: sheet2Records.length,
+        yearMonthCols: yearMonthCols,
+        targetCol: targetCol
+      }
     };
 
     return ContentService
@@ -90,17 +111,18 @@ function getYearMonthCols(data) {
 
 function parseSheet1(data, targetCol) {
   var records = [];
-  // 3行目（index 2）からデータ開始
-  for (var r = 2; r < data.length; r++) {
+  // 4行目（index 3）からデータ開始（1:タイトル, 2:年月, 3:ヘッダー）
+  for (var r = 3; r < data.length; r++) {
     var row = data[r];
-    if (Number(row[1]) !== 1) continue;   // B列（index 1）= flag
+    // A列（index 0）= flag（値が数値の1のみ対象）
+    if (Number(row[0]) !== 1) continue;
 
-    var employeeType = String(row[2] || '').trim();  // C
-    var site         = String(row[3] || '').trim();  // D
-    var prj          = String(row[4] || '').trim();  // E
-    var role         = String(row[5] || '').trim();  // F
-    var gVal         = String(row[6] || '').trim();  // G 社員番号
-    var hVal         = String(row[7] || '').trim();  // H 名前
+    var employeeType = String(row[1] || '').trim();  // B = 雇用区分
+    var site         = String(row[2] || '').trim();  // C = 拠点
+    var prj          = String(row[3] || '').trim();  // D = PRJ
+    var role         = String(row[4] || '').trim();  // E = 担当
+    var gVal         = String(row[5] || '').trim();  // F = 社員番号
+    var hVal         = String(row[6] || '').trim();  // G = 名前
     var employeeId   = (gVal && gVal !== '0') ? 'id:' + gVal : (hVal ? 'name:' + hVal : '');
 
     if (!site || !role) continue;
@@ -122,19 +144,20 @@ function parseSheet1(data, targetCol) {
 
 function parseSheet2(data, targetYearMonth) {
   var records = [];
-  for (var r = 2; r < data.length; r++) {
+  // 4行目（index 3）からデータ開始（シート1と同じ構造を想定）
+  for (var r = 3; r < data.length; r++) {
     var row = data[r];
-    if (Number(row[1]) !== 1) continue;   // B列（index 1）
+    if (Number(row[0]) !== 1) continue;   // A列（index 0）= flag
 
-    // I列（index 8）の計上年月フィルター
-    var rowYM = parseYearMonth(row[8]);
+    // H列（index 7）の計上年月フィルター（シート1と同列ずれを反映）
+    var rowYM = parseYearMonth(row[7]);
     if (rowYM !== targetYearMonth) continue;
 
-    var employeeType = String(row[2] || '').trim();  // C
-    var site         = String(row[3] || '').trim();  // D
-    var prj          = String(row[4] || '').trim();  // E
-    var role         = String(row[5] || '').trim();  // F
-    var adjustHours  = parseWorkHours(row[9]);       // J列（index 9）
+    var employeeType = String(row[1] || '').trim();  // B = 雇用区分
+    var site         = String(row[2] || '').trim();  // C = 拠点
+    var prj          = String(row[3] || '').trim();  // D = PRJ
+    var role         = String(row[4] || '').trim();  // E = 担当
+    var adjustHours  = parseWorkHours(row[8]);       // I列（index 8）= 増減時間
 
     if (!site) continue;
     records.push({ employeeType: employeeType, site: site, prj: prj, role: role,
