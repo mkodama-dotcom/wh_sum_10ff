@@ -15,13 +15,10 @@
   header h1 { font-size: 18px; font-weight: 700; }
   header .subtext { font-size: 12px; opacity: .75; margin-top: 2px; }
 
-  /* Upload area */
-  .upload-area { background: #fff; border: 2px dashed #c7d2fe; border-radius: 8px; padding: 24px; text-align: center; margin: 24px auto; max-width: 960px; cursor: pointer; transition: border-color .2s; }
-  .upload-area:hover { border-color: #6366f1; }
-  .upload-area label { cursor: pointer; display: block; }
-  .upload-area input[type=file] { display: none; }
-  .upload-btn { display: inline-block; background: #4f46e5; color: #fff; padding: 8px 20px; border-radius: 6px; font-size: 14px; margin-bottom: 8px; }
-  .upload-hint { font-size: 12px; color: #888; }
+  /* Upload button (in header) */
+  .upload-btn { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.4); padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s; white-space: nowrap; }
+  .upload-btn:hover { background: rgba(255,255,255,.25); }
+  #file-input { display: none; }
 
   /* Tabs */
   .tabs { display: flex; gap: 0; border-bottom: 2px solid #e0e0e0; max-width: 960px; margin: 0 auto; padding: 0 0; }
@@ -72,15 +69,11 @@
     <h1>勤務時間集計ダッシュボード</h1>
     <div class="subtext" id="target-month-label"></div>
   </div>
-</header>
-
-<div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
-  <label>
+  <label class="upload-btn">
+    📂 Excelを読み込む
     <input type="file" id="file-input" accept=".xlsx">
-    <div class="upload-btn">Excelファイルを選択</div>
-    <div class="upload-hint">シート1・シート2を含む .xlsx ファイルを選択してください</div>
   </label>
-</div>
+</header>
 
 <div class="tabs hidden" id="tabs">
   <button class="tab-btn active" data-tab="table">集計表</button>

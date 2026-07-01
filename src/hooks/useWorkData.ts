@@ -128,12 +128,7 @@ export function useWorkData(useMock = false) {
 
         // シート1のH1セルから対象年月を取得
         const ws1 = workbook.Sheets[sheet1Name];
-        const h1Raw = ws1['H1'];
-        const h1Value = h1Raw?.v ?? null;
-        console.log('[DEBUG] H1セル raw:', JSON.stringify(h1Raw));
-        console.log('[DEBUG] H1セル .v:', h1Value, ' type:', typeof h1Value);
-        const targetYearMonth = parseYearMonth(h1Value) ?? '';
-        console.log('[DEBUG] targetYearMonth:', targetYearMonth);
+        const targetYearMonth = parseYearMonth(ws1['H1']?.v ?? null) ?? '';
 
         const s1 = sheetToRows(ws1);
         const s2 = workbook.Sheets[sheet2Name]
@@ -141,12 +136,6 @@ export function useWorkData(useMock = false) {
           : [];
 
         const sheet1Records = s1.map(parseSheet1Row).filter((r): r is WorkRecord => r !== null);
-        // シート2 I列の年月サンプルを出力（先頭20行のみ）
-        const s2Sample = s2.slice(0, 20).map((row, i) => ({
-          idx: i, B: row['B'], I: row['I'], rowYM: parseYearMonth(row['I']),
-        }));
-        console.log('[DEBUG] シート2 I列サンプル:', JSON.stringify(s2Sample, null, 2));
-
         const sheet2Records = s2
           .map((row) => parseSheet2Row(row, targetYearMonth))
           .filter((r): r is AdjustRecord => r !== null);
@@ -155,7 +144,6 @@ export function useWorkData(useMock = false) {
 
         setState({ siteBlocks: buildSiteBlocks(aggregated), targetMonth: targetYearMonth, loading: false, error: null });
       } catch (err) {
-        console.error('[useWorkData] エラー:', err);
         setState((s) => ({ ...s, loading: false, error: `ファイル読み込みエラー: ${String(err)}` }));
       }
     };
