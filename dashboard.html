@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>勤務時間集計ダッシュボード</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f8f8; color: #222; font-size: 14px; }
+
+  /* Header */
+  header { background: #4f46e5; color: #fff; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 18px; font-weight: 700; }
+  header .subtext { font-size: 12px; opacity: .75; margin-top: 2px; }
+
+  /* Upload area */
+  .upload-area { background: #fff; border: 2px dashed #c7d2fe; border-radius: 8px; padding: 24px; text-align: center; margin: 24px auto; max-width: 960px; cursor: pointer; transition: border-color .2s; }
+  .upload-area:hover { border-color: #6366f1; }
+  .upload-area label { cursor: pointer; display: block; }
+  .upload-area input[type=file] { display: none; }
+  .upload-btn { display: inline-block; background: #4f46e5; color: #fff; padding: 8px 20px; border-radius: 6px; font-size: 14px; margin-bottom: 8px; }
+  .upload-hint { font-size: 12px; color: #888; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 2px solid #e0e0e0; max-width: 960px; margin: 0 auto; padding: 0 0; }
+  .tab-btn { padding: 10px 28px; font-size: 14px; font-weight: 600; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; color: #666; transition: color .15s, border-color .15s; margin-bottom: -2px; }
+  .tab-btn.active { color: #4f46e5; border-bottom-color: #4f46e5; }
+  .tab-btn:hover:not(.active) { color: #333; }
+
+  /* Main content */
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+
+  /* Error / info */
+  .msg-error { background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; }
+  .msg-info  { background: #f0f4ff; color: #555; border-radius: 6px; padding: 40px 16px; text-align: center; font-size: 14px; }
+
+  /* Table */
+  .site-block { margin-bottom: 32px; }
+  .site-title { font-size: 16px; font-weight: 700; color: #374151; margin-bottom: 8px; padding-left: 4px; }
+  .site-title span { color: #4338ca; }
+  .overflow-x { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 480px; }
+  th { background: #4f46e5; color: #fff; padding: 8px 12px; text-align: left; border: 1px solid #6366f1; white-space: nowrap; }
+  th.right { text-align: right; }
+  td { border: 1px solid #e5e7eb; padding: 6px 12px; }
+  td.right { text-align: right; }
+  tr.hover:hover td { background: #f9fafb; }
+  tr.subtotal td { background: #f3f4f6; font-weight: 600; }
+  tr.delivery td { background: #f9fafb; }
+  tr.site-total-emp td { background: #eef2ff; font-weight: 600; }
+  tr.site-total-part td { background: #eef2ff; font-weight: 600; }
+  tr.site-total-sum td { background: #e0e7ff; font-weight: 700; }
+  .hours { color: #c2410c; }
+  .count { color: #1d4ed8; }
+  .avg   { color: #4b5563; }
+  .dash  { color: #9ca3af; }
+
+  /* Chart */
+  .chart-container { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .chart-title { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
+  canvas { max-height: 360px; }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>勤務時間集計ダッシュボード</h1>
+    <div class="subtext" id="target-month-label"></div>
+  </div>
+</header>
+
+<div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+  <label>
+    <input type="file" id="file-input" accept=".xlsx">
+    <div class="upload-btn">Excelファイルを選択</div>
+    <div class="upload-hint">シート1・シート2を含む .xlsx ファイルを選択してください</div>
+  </label>
+</div>
+
+<div class="tabs hidden" id="tabs">
+  <button class="tab-btn active" data-tab="table">集計表</button>
+  <button class="tab-btn" data-tab="chart">グラフ</button>
+</div>
+
+<main>
+  <div id="msg-error" class="msg-error hidden"></div>
+  <div id="msg-info" class="msg-info">Excelファイルをアップロードしてください</div>
+
+  <div id="tab-table" class="hidden"></div>
+  <div id="tab-chart" class="hidden"></div>
+</main>
+
+<script>
+// ─── 集計ロジック ───────────────────────────────────────────
+
+const EXCLUDE_ROLES = new Set(['研修_社内', '研修_社外', '非整理対象']);
+const DELIVERY_ROLES = new Set(['配送・栽培', '配送・出荷']);
+
+function parseWorkHours(val) {
+  if (val === null || val === undefined || val === 'なし') return 0;
+  const num = Number(val);
+  if (isNaN(num)) return 0;
+  return num * 24; // Excelシリアル値（1=24h）
+}
+
+function parseYearMonth(val) {
+  if (val === null || val === undefined) return null;
+  const num = Number(val);
+  if (!isNaN(num) && num > 0) {
+    const date = new Date(Math.round((num - 25569) * 86400 * 1000));
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }
+  const str = String(val).trim();
+  const match = str.match(/^(\d{4})-(\d{2})/);
+  if (match) return `${match[1]}-${match[2]}`;
+  return null;
+}
+
+function mapEmployeeCategory(raw) {
+  if (raw === 'アルバイト') return 'part';
+  if (raw === '社員＋技能実習生' || raw === '技能実習生' || raw === '社員') return 'employee';
+  return null;
+}
+
+function sheetToRows(ws) {
+  const ref = ws['!ref'];
+  if (!ref) return [];
+  const range = XLSX.utils.decode_range(ref);
+  const rows = [];
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    const row = {};
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const col = XLSX.utils.encode_col(C);
+      const addr = XLSX.utils.encode_cell({ r: R, c: C });
+      row[col] = ws[addr] ? ws[addr].v : null;
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+function parseSheet1Row(row) {
+  if (Number(row['B']) !== 1) return null;
+  const employeeType = String(row['C'] ?? '');
+  const site = String(row['D'] ?? '').trim();
+  const prj  = String(row['E'] ?? '').trim();
+  const role = String(row['F'] ?? '').trim();
+  const gVal = String(row['G'] ?? '').trim();
+  const hVal = String(row['H'] ?? '').trim();
+  const employeeId = (gVal !== '' && gVal !== '0') ? `id:${gVal}` : hVal !== '' ? `name:${hVal}` : '';
+  const workHours = parseWorkHours(row['K']);
+  if (!site || !role) return null;
+  if (EXCLUDE_ROLES.has(role)) return null;
+  if (workHours === 0) return null;
+  return { employeeType, site, prj, role, employeeId, workHours };
+}
+
+function parseSheet2Row(row, targetYearMonth) {
+  if (Number(row['B']) !== 1) return null;
+  const rowYM = parseYearMonth(row['I']);
+  if (rowYM !== targetYearMonth) return null;
+  const employeeType = String(row['C'] ?? '');
+  const site = String(row['D'] ?? '').trim();
+  const prj  = String(row['E'] ?? '').trim();
+  const role = String(row['F'] ?? '').trim();
+  const adjustHours = parseWorkHours(row['J']);
+  if (!site) return null;
+  return { employeeType, site, prj, role, adjustHours };
+}
+
+function aggregateSheet1(records) {
+  const map = new Map();
+  for (const r of records) {
+    const category = mapEmployeeCategory(r.employeeType);
+    if (!category) continue;
+    if (EXCLUDE_ROLES.has(r.role)) continue;
+    const key = `${r.site}|${r.role}|${category}`;
+    const existing = map.get(key) ?? { totalHours: 0, employeeIds: new Set() };
+    existing.totalHours += r.workHours;
+    existing.employeeIds.add(r.employeeId);
+    map.set(key, existing);
+  }
+  return map;
+}
+
+function applyAdjustments(base, adjustRecords, site) {
+  const result = new Map(base);
+  for (const adj of adjustRecords) {
+    const category = mapEmployeeCategory(adj.employeeType);
+    if (!category) continue;
+    const fromKey = `${site}|${adj.role}|${category}`;
+    if (adj.site === adj.prj) {
+      // D=E: 研修（減算のみ）
+      const entry = result.get(fromKey);
+      if (entry) result.set(fromKey, { ...entry, totalHours: entry.totalHours - adj.adjustHours });
+    } else {
+      // D≠E: 振替（F列から減算、E列へ加算）
+      const fromEntry = result.get(fromKey);
+      if (fromEntry) result.set(fromKey, { ...fromEntry, totalHours: fromEntry.totalHours - adj.adjustHours });
+      const toKey = `${site}|${adj.prj}|${category}`;
+      const toEntry = result.get(toKey) ?? { totalHours: 0, employeeIds: new Set() };
+      result.set(toKey, { ...toEntry, totalHours: toEntry.totalHours + adj.adjustHours });
+    }
+  }
+  return result;
+}
+
+function aggregateData(sheet1, sheet2, targetMonth) {
+  const base = aggregateSheet1(sheet1);
+  const sites = new Set(sheet1.map(r => r.site));
+  let adjusted = base;
+  for (const site of sites) {
+    const siteAdj = sheet2.filter(a => a.site === site);
+    adjusted = applyAdjustments(adjusted, siteAdj, site);
+  }
+  return Array.from(adjusted.entries()).map(([key, val]) => {
+    const [site, role, employeeCategory] = key.split('|');
+    const headcount = val.employeeIds.size;
+    return { yearMonth: targetMonth, site, role, employeeCategory, totalHours: val.totalHours, headcount,
+             avgHours: headcount > 0 ? val.totalHours / headcount : 0 };
+  });
+}
+
+function buildSiteBlocks(rows) {
+  const siteMap = new Map();
+  for (const row of rows) {
+    if (!siteMap.has(row.site)) siteMap.set(row.site, new Map());
+    const roleMap = siteMap.get(row.site);
+    if (!roleMap.has(row.role)) roleMap.set(row.role, {});
+    roleMap.get(row.role)[row.employeeCategory] = row;
+  }
+
+  return Array.from(siteMap.entries()).map(([site, roleMap]) => {
+    const deliveryEmp  = { totalHours: 0, headcount: 0 };
+    const deliveryPart = { totalHours: 0, headcount: 0 };
+    const regularRoles = [];
+    let hasDelivery = false;
+
+    for (const [role, cats] of roleMap.entries()) {
+      if (DELIVERY_ROLES.has(role)) {
+        hasDelivery = true;
+        if (cats.employee) { deliveryEmp.totalHours  += cats.employee.totalHours;  deliveryEmp.headcount  += cats.employee.headcount; }
+        if (cats.part)     { deliveryPart.totalHours += cats.part.totalHours;     deliveryPart.headcount += cats.part.headcount; }
+        continue;
+      }
+      const emp = cats.employee ?? null;
+      const prt = cats.part ?? null;
+      regularRoles.push({
+        role,
+        employee: emp ? { totalHours: emp.totalHours, headcount: emp.headcount, avgHours: emp.avgHours } : null,
+        part:     prt ? { totalHours: prt.totalHours, headcount: prt.headcount, avgHours: prt.avgHours } : null,
+        subtotal: { totalHours: (emp?.totalHours ?? 0) + (prt?.totalHours ?? 0), headcount: (emp?.headcount ?? 0) + (prt?.headcount ?? 0) },
+        isDelivery: false,
+      });
+    }
+
+    const displayRoles = [...regularRoles];
+    if (hasDelivery) {
+      const th = deliveryEmp.totalHours + deliveryPart.totalHours;
+      const hc = deliveryEmp.headcount  + deliveryPart.headcount;
+      displayRoles.push({
+        role: '配送',
+        employee: deliveryEmp.headcount  > 0 ? { totalHours: deliveryEmp.totalHours,  headcount: deliveryEmp.headcount,  avgHours: deliveryEmp.totalHours  / deliveryEmp.headcount  } : null,
+        part:     deliveryPart.headcount > 0 ? { totalHours: deliveryPart.totalHours, headcount: deliveryPart.headcount, avgHours: deliveryPart.totalHours / deliveryPart.headcount } : null,
+        subtotal: { totalHours: th, headcount: hc },
+        isDelivery: true,
+      });
+    }
+
+    let totalEmpH = 0, totalEmpN = 0, totalPartH = 0, totalPartN = 0;
+    for (const r of displayRoles) {
+      if (r.employee) { totalEmpH  += r.employee.totalHours; totalEmpN  += r.employee.headcount; }
+      if (r.part)     { totalPartH += r.part.totalHours;     totalPartN += r.part.headcount; }
+    }
+
+    return {
+      site, roles: displayRoles,
+      total: {
+        employee: totalEmpN  > 0 ? { totalHours: totalEmpH,  headcount: totalEmpN  } : null,
+        part:     totalPartN > 0 ? { totalHours: totalPartH, headcount: totalPartN } : null,
+        totalHours: totalEmpH + totalPartH,
+        headcount:  totalEmpN + totalPartN,
+      },
+    };
+  });
+}
+
+// ─── UI ─────────────────────────────────────────────────────
+
+const fmt = h => `${h.toFixed(1)}h`;
+let chartInstances = [];
+
+function renderTable(siteBlocks) {
+  const container = document.getElementById('tab-table');
+  container.innerHTML = '';
+
+  for (const block of siteBlocks) {
+    const { site, roles, total } = block;
+    const div = document.createElement('div');
+    div.className = 'site-block';
+    div.innerHTML = `<div class="site-title">拠点：<span>${site}</span></div>`;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'overflow-x';
+
+    const table = document.createElement('table');
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th style="width:96px">担当</th>
+          <th style="width:150px">雇用区分</th>
+          <th class="right" style="width:96px">時間</th>
+          <th class="right" style="width:80px">人数</th>
+          <th class="right" style="width:96px">平均時間</th>
+        </tr>
+      </thead>`;
+
+    const tbody = document.createElement('tbody');
+
+    for (const row of roles) {
+      if (row.isDelivery) {
+        const tr = document.createElement('tr');
+        tr.className = 'delivery';
+        tr.innerHTML = `
+          <td>${row.role}</td>
+          <td class="dash">計</td>
+          <td class="right hours">${fmt(row.subtotal.totalHours)}</td>
+          <td class="right count">${row.subtotal.headcount}人</td>
+          <td class="right dash">—</td>`;
+        tbody.appendChild(tr);
+        continue;
+      }
+
+      const rowCount = (row.employee ? 1 : 0) + (row.part ? 1 : 0) + 1;
+      let first = true;
+
+      const addRow = (label, data, cls) => {
+        const tr = document.createElement('tr');
+        tr.className = cls;
+        let roleCell = '';
+        if (first) {
+          roleCell = `<td rowspan="${rowCount}" style="font-weight:600;vertical-align:top">${row.role}</td>`;
+          first = false;
+        }
+        tr.innerHTML = roleCell + `
+          <td>${label}</td>
+          <td class="right hours">${fmt(data.totalHours)}</td>
+          <td class="right count">${data.headcount}人</td>
+          <td class="right avg">${data.avgHours !== undefined ? fmt(data.avgHours) : '—'}</td>`;
+        tbody.appendChild(tr);
+      };
+
+      if (row.employee) addRow('社員・技能実習生', row.employee, 'hover');
+      if (row.part)     addRow('パート', row.part, 'hover');
+
+      // 小計行
+      const trSub = document.createElement('tr');
+      trSub.className = 'subtotal';
+      let subRoleCell = '';
+      if (first) subRoleCell = `<td style="font-weight:600">${row.role}</td>`;
+      trSub.innerHTML = subRoleCell + `
+        <td class="dash" style="padding-left:20px">　計</td>
+        <td class="right hours">${fmt(row.subtotal.totalHours)}</td>
+        <td class="right count">${row.subtotal.headcount}人</td>
+        <td class="right dash">—</td>`;
+      tbody.appendChild(trSub);
+    }
+
+    // 拠点計
+    const totalRowCount = (total.employee ? 1 : 0) + (total.part ? 1 : 0) + 1;
+    let totalFirst = true;
+
+    const addTotalRow = (label, data, cls) => {
+      const tr = document.createElement('tr');
+      tr.className = cls;
+      let cell = '';
+      if (totalFirst) {
+        cell = `<td rowspan="${totalRowCount}" style="color:#3730a3;vertical-align:top">${site}<br><span style="font-size:11px;font-weight:400">拠点計</span></td>`;
+        totalFirst = false;
+      }
+      tr.innerHTML = cell + `
+        <td>${label}</td>
+        <td class="right hours">${fmt(data.totalHours)}</td>
+        <td class="right count">${data.headcount}人</td>
+        <td class="right dash">—</td>`;
+      tbody.appendChild(tr);
+    };
+
+    if (total.employee) addTotalRow('社員・技能実習生', total.employee, 'site-total-emp');
+    if (total.part)     addTotalRow('パート', total.part, 'site-total-part');
+
+    const trSum = document.createElement('tr');
+    trSum.className = 'site-total-sum';
+    let sumCell = '';
+    if (totalFirst) sumCell = `<td style="color:#3730a3">${site}<br><span style="font-size:11px;font-weight:400">拠点計</span></td>`;
+    trSum.innerHTML = sumCell + `
+      <td class="dash" style="padding-left:20px">　計</td>
+      <td class="right hours">${fmt(total.totalHours)}</td>
+      <td class="right count">${total.headcount}人</td>
+      <td class="right dash">—</td>`;
+    tbody.appendChild(trSum);
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    div.appendChild(wrap);
+    container.appendChild(div);
+  }
+}
+
+function renderChart(siteBlocks) {
+  // 既存のグラフを破棄
+  for (const c of chartInstances) c.destroy();
+  chartInstances = [];
+
+  const container = document.getElementById('tab-chart');
+  container.innerHTML = '';
+
+  const labels  = siteBlocks.map(b => b.site);
+  const empH    = siteBlocks.map(b => b.total.employee?.totalHours  ?? 0);
+  const partH   = siteBlocks.map(b => b.total.part?.totalHours     ?? 0);
+  const empN    = siteBlocks.map(b => b.total.employee?.headcount  ?? 0);
+  const partN   = siteBlocks.map(b => b.total.part?.headcount     ?? 0);
+
+  const makeChart = (title, datasets) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'chart-container';
+    wrap.innerHTML = `<div class="chart-title">${title}</div>`;
+    const canvas = document.createElement('canvas');
+    wrap.appendChild(canvas);
+    container.appendChild(wrap);
+    const instance = new Chart(canvas, {
+      type: 'bar',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'top' } },
+        scales: { x: { stacked: false }, y: { beginAtZero: true } },
+      },
+    });
+    chartInstances.push(instance);
+  };
+
+  makeChart('拠点別 勤務時間（h）', [
+    { label: '社員・技能実習生', data: empH,  backgroundColor: 'rgba(79,70,229,.75)'  },
+    { label: 'パート',           data: partH, backgroundColor: 'rgba(251,146,60,.75)' },
+  ]);
+  makeChart('拠点別 人数', [
+    { label: '社員・技能実習生', data: empN,  backgroundColor: 'rgba(79,70,229,.75)'  },
+    { label: 'パート',           data: partN, backgroundColor: 'rgba(251,146,60,.75)' },
+  ]);
+}
+
+function showTab(name) {
+  document.getElementById('tab-table').classList.toggle('hidden', name !== 'table');
+  document.getElementById('tab-chart').classList.toggle('hidden', name !== 'chart');
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === name);
+  });
+  if (name === 'chart') renderChart(window._siteBlocks ?? []);
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => showTab(btn.dataset.tab));
+});
+
+// ─── ファイル読み込み ─────────────────────────────────────
+
+document.getElementById('file-input').addEventListener('change', function () {
+  const file = this.files[0];
+  if (!file) return;
+  loadExcel(file);
+});
+
+function showError(msg) {
+  const el = document.getElementById('msg-error');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function loadExcel(file) {
+  document.getElementById('msg-error').classList.add('hidden');
+  document.getElementById('msg-info').classList.add('hidden');
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array', cellFormula: false, cellNF: false });
+
+      const sheet1Name = 'シート1';
+      const sheet2Name = 'シート2';
+
+      if (!workbook.Sheets[sheet1Name]) {
+        throw new Error(`シート「${sheet1Name}」が見つかりません。シート一覧: ${workbook.SheetNames.join(', ')}`);
+      }
+
+      const ws1 = workbook.Sheets[sheet1Name];
+      const h1Value = ws1['H1'] ? ws1['H1'].v : null;
+      const targetYearMonth = parseYearMonth(h1Value) ?? '';
+
+      if (targetYearMonth) {
+        document.getElementById('target-month-label').textContent = `対象月：${targetYearMonth}`;
+      }
+
+      const s1 = sheetToRows(ws1);
+      const s2 = workbook.Sheets[sheet2Name] ? sheetToRows(workbook.Sheets[sheet2Name]) : [];
+
+      const sheet1Records = s1.map(parseSheet1Row).filter(Boolean);
+      const sheet2Records = s2.map(r => parseSheet2Row(r, targetYearMonth)).filter(Boolean);
+
+      const aggregated  = aggregateData(sheet1Records, sheet2Records, targetYearMonth);
+      const siteBlocks  = buildSiteBlocks(aggregated);
+      window._siteBlocks = siteBlocks;
+
+      renderTable(siteBlocks);
+      document.getElementById('tab-table').classList.remove('hidden');
+      document.getElementById('tab-chart').classList.add('hidden');
+      document.getElementById('tabs').classList.remove('hidden');
+
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === 'table');
+      });
+    } catch (err) {
+      showError('ファイル読み込みエラー: ' + err.message);
+    }
+  };
+  reader.onerror = () => showError('ファイルの読み取りに失敗しました');
+  reader.readAsArrayBuffer(file);
+}
+</script>
+</body>
+</html>
